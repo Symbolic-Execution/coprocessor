@@ -1,0 +1,8 @@
+[package]
+name = "coprocessor-handle-graph-core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "coprocessor_handle_graph_core"
+path = "src/lib.rs"

@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/handle-graph-core"]
+resolver = "2"
