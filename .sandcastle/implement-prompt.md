@@ -44,11 +44,11 @@ Prefer `cargo fmt --all` before committing.
 
 Make a git commit. The commit message must:
 
-1. Start with `RALPH:` prefix
-2. Include task completed + PRD reference
-3. Key decisions made
-4. Files changed
-5. Blockers or notes for next iteration
+1. Use an imperative summary that names the task completed
+2. Include the PRD or issue reference
+3. Call out key decisions made
+4. Mention files changed when useful
+5. Note blockers or next-iteration context when relevant
 
 Keep it concise.
 
