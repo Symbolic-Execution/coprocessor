@@ -1,0 +1,52 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { z } from "zod";
+import { reviewSchema, type Review } from "./review-output.mts";
+
+const cachedReviewSchema = z.object({
+  branch: z.string(),
+  headSha: z.string(),
+  review: reviewSchema,
+});
+
+export async function readCachedApprovedReview(
+  branch: string,
+  headSha: string,
+) {
+  try {
+    const cached = cachedReviewSchema.parse(
+      JSON.parse(await readFile(cachePath(branch), "utf8")),
+    );
+
+    if (
+      cached.branch === branch &&
+      cached.headSha === headSha &&
+      cached.review.approved
+    ) {
+      return cached.review;
+    }
+  } catch {
+    return undefined;
+  }
+}
+
+export async function writeCachedReview(
+  branch: string,
+  headSha: string,
+  review: Review,
+) {
+  if (!review.approved) {
+    return;
+  }
+
+  const path = cachePath(branch);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(
+    path,
+    `${JSON.stringify({ branch, headSha, review }, null, 2)}\n`,
+  );
+}
+
+function cachePath(branch: string) {
+  return join(".sandcastle", "review-cache", `${branch.replace(/\//g, "-")}.json`);
+}

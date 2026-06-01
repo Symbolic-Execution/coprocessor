@@ -1,0 +1,27 @@
+{
+  "name": "coprocessor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Coprocessor implementation for the Symbolic confidential execution model.",
+  "scripts": {
+    "sandcastle": "tsx .sandcastle/main.mts",
+    "typecheck": "tsc --noEmit && cargo check --workspace",
+    "test": "cargo test --workspace"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Symbolic-Execution/coprocessor.git"
+  },
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/Symbolic-Execution/coprocessor/issues"
+  },
+  "homepage": "https://github.com/Symbolic-Execution/coprocessor#readme",
+  "devDependencies": {
+    "@ai-hero/sandcastle": "^0.6.4",
+    "@types/node": "^25.9.1",
+    "tsx": "^4.22.3",
+    "typescript": "^6.0.3",
+    "zod": "^4.4.3"
+  }
+}
