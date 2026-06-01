@@ -1,6 +1,7 @@
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DomainId, HandleGraphCore, HandleId,
-    HandleKey, HandleState, HandleType, ImportedHandle, MaterializationReceipt, SystemCiphertextV1,
+    HandleKey, HandleRecord, HandleState, HandleType, ImportedHandle, IngestionOutcome,
+    MaterializationReceipt, SystemCiphertextV1,
 };
 
 #[test]
@@ -11,13 +12,13 @@ fn imported_handle_chain_event_creates_ready_canonical_handle_record() {
     let system_ciphertext = SystemCiphertextV1(vec![1, 2, 3]);
     let materialization_receipt = MaterializationReceipt(vec![4, 5, 6]);
 
-    core.apply_chain_event(imported_handle_event(
+    let _ = expect_recorded(core.apply_chain_event(imported_handle_event(
         handle_key,
         event_ref,
         HandleType::Suint256,
         system_ciphertext.clone(),
         materialization_receipt.clone(),
-    ));
+    )));
 
     let record = core
         .canonical_handle(&handle_key)
@@ -51,20 +52,23 @@ fn re_consuming_same_chain_event_ref_does_not_replace_imported_handle_record() {
     let original_ciphertext = SystemCiphertextV1(vec![1, 2, 3]);
     let original_receipt = MaterializationReceipt(vec![4, 5, 6]);
 
-    core.apply_chain_event(imported_handle_event(
+    let _ = expect_recorded(core.apply_chain_event(imported_handle_event(
         handle_key,
         event_ref,
         HandleType::Suint256,
         original_ciphertext.clone(),
         original_receipt.clone(),
-    ));
+    )));
 
-    core.apply_chain_event(imported_handle_event(
-        handle_key,
-        event_ref,
-        HandleType::Suint256,
-        SystemCiphertextV1(vec![7, 8, 9]),
-        MaterializationReceipt(vec![10, 11, 12]),
+    assert!(matches!(
+        core.apply_chain_event(imported_handle_event(
+            handle_key,
+            event_ref,
+            HandleType::Suint256,
+            SystemCiphertextV1(vec![7, 8, 9]),
+            MaterializationReceipt(vec![10, 11, 12]),
+        )),
+        IngestionOutcome::Idempotent,
     ));
 
     assert_eq!(
@@ -89,13 +93,13 @@ fn handle_key_distinguishes_same_handle_id_across_chain_id_and_contract_address(
         (different_chain, chain_event_ref(2, 10, 2), vec![2]),
         (different_contract, chain_event_ref(1, 10, 3), vec![3]),
     ] {
-        core.apply_chain_event(imported_handle_event(
+        let _ = expect_recorded(core.apply_chain_event(imported_handle_event(
             handle_key,
             event_ref,
             HandleType::Suint256,
             SystemCiphertextV1(ciphertext),
             MaterializationReceipt(vec![4]),
-        ));
+        )));
     }
 
     assert_eq!(
@@ -113,6 +117,13 @@ fn handle_key_distinguishes_same_handle_id_across_chain_id_and_contract_address(
             .map(|record| record.handle_key),
         Some(different_contract)
     );
+}
+
+fn expect_recorded(outcome: IngestionOutcome) -> HandleRecord {
+    match outcome {
+        IngestionOutcome::Recorded(record) => record,
+        other => panic!("expected Recorded, got {:?}", other),
+    }
 }
 
 fn imported_handle_event(

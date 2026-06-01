@@ -1,8 +1,8 @@
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
-    FailureReason, HandleGraphCore, HandleId, HandleKey, HandleLineage, HandleState, HandleType,
-    ImportedHandle, IngestionOutcome, LineageViolation, MaterializationReceipt, OperationCode,
-    OperationViolation, SystemCiphertextV1,
+    FailureReason, HandleGraphCore, HandleId, HandleKey, HandleLineage, HandleRecord, HandleState,
+    HandleType, ImportedHandle, IngestionOutcome, LineageViolation, MaterializationReceipt,
+    OperationCode, OperationViolation, SystemCiphertextV1,
 };
 
 const DEFAULT_DOMAIN: u8 = 9;
@@ -15,16 +15,16 @@ fn add_with_two_suint256_inputs_creates_pending_derived_handle() {
     let derived = handle_key(1, 7, 10);
     let event_ref = chain_event_ref(1, 2, 1);
 
-    let outcome = core.apply_chain_event(derived_operation_event(
+    let recorded = expect_recorded(core.apply_chain_event(derived_operation_event(
         derived,
         OperationCode::Add,
         HandleType::Suint256,
         vec![a, b],
         event_ref,
         DEFAULT_DOMAIN,
-    ));
+    )));
 
-    assert!(matches!(outcome, IngestionOutcome::Recorded(_)));
+    assert_eq!(recorded.handle_key, derived);
     let record = core
         .canonical_handle(&derived)
         .expect("derived handle stored");
@@ -67,14 +67,14 @@ fn select_preserves_input_order_as_predicate_when_true_when_false() {
     );
 
     let derived = handle_key(1, 7, 23);
-    core.apply_chain_event(derived_operation_event(
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
         derived,
         OperationCode::Select,
         HandleType::Suint256,
         vec![predicate, when_true, when_false],
         chain_event_ref(1, 2, 1),
         DEFAULT_DOMAIN,
-    ));
+    )));
 
     let record = core
         .canonical_handle(&derived)
@@ -101,14 +101,14 @@ fn derived_handles_never_become_ready_in_this_slice() {
     let (a, b) = seed_suint_pair(&mut core, 1, 2);
     let derived = handle_key(1, 7, 30);
 
-    core.apply_chain_event(derived_operation_event(
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
         derived,
         OperationCode::Add,
         HandleType::Suint256,
         vec![a, b],
         chain_event_ref(1, 2, 1),
         DEFAULT_DOMAIN,
-    ));
+    )));
 
     let record = core.canonical_handle(&derived).expect("derived stored");
     assert!(
@@ -127,15 +127,14 @@ fn duplicate_canonical_handle_key_creation_fails_later_handle_with_lineage_viola
     let first_event = chain_event_ref(1, 2, 1);
     let second_event = chain_event_ref(1, 2, 2);
 
-    let first = core.apply_chain_event(derived_operation_event(
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
         shared,
         OperationCode::Add,
         HandleType::Suint256,
         vec![a, b],
         first_event,
         DEFAULT_DOMAIN,
-    ));
-    assert!(matches!(first, IngestionOutcome::Recorded(_)));
+    )));
 
     let second = core.apply_chain_event(derived_operation_event(
         shared,
@@ -181,14 +180,14 @@ fn unknown_input_handle_in_same_domain_fails_with_lineage_violation() {
     let unknown = handle_key(1, 7, 51);
     let derived = handle_key(1, 7, 52);
 
-    core.apply_chain_event(derived_operation_event(
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
         derived,
         OperationCode::Add,
         HandleType::Suint256,
         vec![known, unknown],
         chain_event_ref(1, 2, 1),
         DEFAULT_DOMAIN,
-    ));
+    )));
 
     let record = core
         .canonical_handle(&derived)
@@ -208,12 +207,12 @@ fn unknown_input_handle_in_same_domain_fails_with_lineage_violation() {
 fn input_handle_from_other_domain_is_a_lineage_violation() {
     let mut core = HandleGraphCore::new();
     let other_domain_input = handle_key(1, 7, 60);
-    core.apply_chain_event(imported_event_owned(
+    let _ = expect_recorded(core.apply_chain_event(imported_event_owned(
         other_domain_input,
         HandleType::Suint256,
         chain_event_ref(1, 1, 1),
         OTHER_DOMAIN,
-    ));
+    )));
     let same_domain_input = handle_key(1, 7, 61);
     seed_imported(
         &mut core,
@@ -223,14 +222,14 @@ fn input_handle_from_other_domain_is_a_lineage_violation() {
     );
     let derived = handle_key(1, 7, 62);
 
-    core.apply_chain_event(derived_operation_event(
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
         derived,
         OperationCode::Add,
         HandleType::Suint256,
         vec![other_domain_input, same_domain_input],
         chain_event_ref(1, 2, 1),
         DEFAULT_DOMAIN,
-    ));
+    )));
 
     let record = core
         .canonical_handle(&derived)
@@ -252,14 +251,14 @@ fn wrong_operation_arity_is_an_operation_violation() {
     let (a, _) = seed_suint_pair(&mut core, 1, 2);
     let derived = handle_key(1, 7, 70);
 
-    core.apply_chain_event(derived_operation_event(
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
         derived,
         OperationCode::Add,
         HandleType::Suint256,
         vec![a],
         chain_event_ref(1, 2, 1),
         DEFAULT_DOMAIN,
-    ));
+    )));
 
     let record = core
         .canonical_handle(&derived)
@@ -300,14 +299,14 @@ fn wrong_input_handle_type_is_an_operation_violation() {
     );
     let derived = handle_key(1, 7, 82);
 
-    core.apply_chain_event(derived_operation_event(
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
         derived,
         OperationCode::Add,
         HandleType::Suint256,
         vec![suint, sbool],
         chain_event_ref(1, 2, 1),
         DEFAULT_DOMAIN,
-    ));
+    )));
 
     let record = core
         .canonical_handle(&derived)
@@ -335,14 +334,14 @@ fn wrong_output_handle_type_is_an_operation_violation() {
     let (a, b) = seed_suint_pair(&mut core, 1, 2);
     let derived = handle_key(1, 7, 90);
 
-    core.apply_chain_event(derived_operation_event(
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
         derived,
         OperationCode::Add,
         HandleType::Sbool,
         vec![a, b],
         chain_event_ref(1, 2, 1),
         DEFAULT_DOMAIN,
-    ));
+    )));
 
     let record = core
         .canonical_handle(&derived)
@@ -368,14 +367,14 @@ fn comparison_with_two_suint256_inputs_produces_pending_sbool() {
     let (a, b) = seed_suint_pair(&mut core, 1, 2);
     let derived = handle_key(1, 7, 100);
 
-    core.apply_chain_event(derived_operation_event(
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
         derived,
         OperationCode::Eq,
         HandleType::Sbool,
         vec![a, b],
         chain_event_ref(1, 2, 1),
         DEFAULT_DOMAIN,
-    ));
+    )));
 
     let record = core.canonical_handle(&derived).expect("derived stored");
     assert_eq!(record.handle_type, HandleType::Sbool);
@@ -401,14 +400,14 @@ fn comparison_with_sbool_input_is_wrong_input_type() {
     );
     let derived = handle_key(1, 7, 112);
 
-    core.apply_chain_event(derived_operation_event(
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
         derived,
         OperationCode::Eq,
         HandleType::Sbool,
         vec![suint, sbool],
         chain_event_ref(1, 2, 1),
         DEFAULT_DOMAIN,
-    ));
+    )));
 
     let record = core.canonical_handle(&derived).expect("failed");
     assert!(matches!(
@@ -428,14 +427,14 @@ fn boolean_and_with_two_sbool_inputs_produces_pending_sbool() {
     let (a, b) = seed_sbool_pair(&mut core, 3, 4);
     let derived = handle_key(1, 7, 120);
 
-    core.apply_chain_event(derived_operation_event(
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
         derived,
         OperationCode::And,
         HandleType::Sbool,
         vec![a, b],
         chain_event_ref(1, 2, 1),
         DEFAULT_DOMAIN,
-    ));
+    )));
 
     let record = core.canonical_handle(&derived).expect("derived stored");
     assert_eq!(record.handle_type, HandleType::Sbool);
@@ -461,14 +460,14 @@ fn boolean_and_with_suint_input_is_wrong_input_type() {
     );
     let derived = handle_key(1, 7, 132);
 
-    core.apply_chain_event(derived_operation_event(
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
         derived,
         OperationCode::And,
         HandleType::Sbool,
         vec![suint, sbool],
         chain_event_ref(1, 2, 1),
         DEFAULT_DOMAIN,
-    ));
+    )));
 
     let record = core.canonical_handle(&derived).expect("failed");
     assert!(matches!(
@@ -494,14 +493,14 @@ fn not_with_one_sbool_input_produces_pending_sbool() {
     );
     let derived = handle_key(1, 7, 141);
 
-    core.apply_chain_event(derived_operation_event(
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
         derived,
         OperationCode::Not,
         HandleType::Sbool,
         vec![sbool],
         chain_event_ref(1, 2, 1),
         DEFAULT_DOMAIN,
-    ));
+    )));
 
     let record = core.canonical_handle(&derived).expect("derived stored");
     assert_eq!(record.state, HandleState::Pending);
@@ -513,14 +512,14 @@ fn not_with_two_inputs_is_wrong_arity() {
     let (a, b) = seed_sbool_pair(&mut core, 3, 4);
     let derived = handle_key(1, 7, 150);
 
-    core.apply_chain_event(derived_operation_event(
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
         derived,
         OperationCode::Not,
         HandleType::Sbool,
         vec![a, b],
         chain_event_ref(1, 2, 1),
         DEFAULT_DOMAIN,
-    ));
+    )));
 
     let record = core.canonical_handle(&derived).expect("failed");
     assert!(matches!(
@@ -554,14 +553,14 @@ fn select_with_two_inputs_is_wrong_arity() {
     );
     let derived = handle_key(1, 7, 162);
 
-    core.apply_chain_event(derived_operation_event(
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
         derived,
         OperationCode::Select,
         HandleType::Suint256,
         vec![predicate, when_true],
         chain_event_ref(1, 2, 1),
         DEFAULT_DOMAIN,
-    ));
+    )));
 
     let record = core.canonical_handle(&derived).expect("failed");
     assert!(matches!(
@@ -602,14 +601,14 @@ fn select_with_non_sbool_predicate_is_wrong_input_type_at_index_zero() {
     );
     let derived = handle_key(1, 7, 173);
 
-    core.apply_chain_event(derived_operation_event(
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
         derived,
         OperationCode::Select,
         HandleType::Suint256,
         vec![predicate, when_true, when_false],
         chain_event_ref(1, 2, 1),
         DEFAULT_DOMAIN,
-    ));
+    )));
 
     let record = core.canonical_handle(&derived).expect("failed");
     match &record.state {
@@ -658,14 +657,14 @@ fn select_with_mismatched_branch_types_is_wrong_input_type_at_index_two() {
     );
     let derived = handle_key(1, 7, 183);
 
-    core.apply_chain_event(derived_operation_event(
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
         derived,
         OperationCode::Select,
         HandleType::Suint256,
         vec![predicate, when_true, when_false],
         chain_event_ref(1, 2, 1),
         DEFAULT_DOMAIN,
-    ));
+    )));
 
     let record = core.canonical_handle(&derived).expect("failed");
     match &record.state {
@@ -727,12 +726,19 @@ fn seed_imported(
     handle_type: HandleType,
     event_ref: ChainEventRef,
 ) {
-    core.apply_chain_event(imported_event_owned(
+    let _ = expect_recorded(core.apply_chain_event(imported_event_owned(
         handle_key,
         handle_type,
         event_ref,
         DEFAULT_DOMAIN,
-    ));
+    )));
+}
+
+fn expect_recorded(outcome: IngestionOutcome) -> HandleRecord {
+    match outcome {
+        IngestionOutcome::Recorded(record) => record,
+        other => panic!("expected Recorded, got {:?}", other),
+    }
 }
 
 fn imported_event_owned(
