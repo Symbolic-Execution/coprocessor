@@ -61,6 +61,7 @@ pub struct HandleRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChainEvent {
     ImportedHandle(ImportedHandle),
+    PlaintextHandle(PlaintextHandle),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -70,6 +71,18 @@ pub struct ImportedHandle {
     pub handle_type: HandleType,
     pub system_ciphertext: SystemCiphertextV1,
     pub materialization_receipt: MaterializationReceipt,
+    pub event_ref: ChainEventRef,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PublicPlaintextValue(pub Vec<u8>);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlaintextHandle {
+    pub domain_id: DomainId,
+    pub handle_key: HandleKey,
+    pub handle_type: HandleType,
+    pub public_value: PublicPlaintextValue,
     pub event_ref: ChainEventRef,
 }
 
@@ -107,6 +120,24 @@ impl HandleGraphCore {
                     },
                 );
             }
+            ChainEvent::PlaintextHandle(plaintext) => {
+                let system_ciphertext = placeholder_plaintext_system_ciphertext(&plaintext);
+                let materialization_receipt = placeholder_plaintext_receipt(&plaintext);
+                self.records.insert(
+                    plaintext.handle_key,
+                    HandleRecord {
+                        domain_id: plaintext.domain_id,
+                        handle_key: plaintext.handle_key,
+                        handle_type: plaintext.handle_type,
+                        state: HandleState::Ready {
+                            system_ciphertext,
+                            materialization_receipt,
+                        },
+                        event_ref: plaintext.event_ref,
+                        is_canonical: true,
+                    },
+                );
+            }
         }
     }
 
@@ -119,6 +150,19 @@ impl ChainEvent {
     fn event_ref(&self) -> ChainEventRef {
         match self {
             ChainEvent::ImportedHandle(imported) => imported.event_ref,
+            ChainEvent::PlaintextHandle(plaintext) => plaintext.event_ref,
         }
     }
+}
+
+fn placeholder_plaintext_system_ciphertext(plaintext: &PlaintextHandle) -> SystemCiphertextV1 {
+    let mut bytes = b"plaintext-system-ciphertext-v1-placeholder:".to_vec();
+    bytes.extend_from_slice(&plaintext.handle_key.handle_id.0);
+    SystemCiphertextV1(bytes)
+}
+
+fn placeholder_plaintext_receipt(plaintext: &PlaintextHandle) -> MaterializationReceipt {
+    let mut bytes = b"plaintext-materialization-receipt-v1-placeholder:".to_vec();
+    bytes.extend_from_slice(&plaintext.handle_key.handle_id.0);
+    MaterializationReceipt(bytes)
 }
