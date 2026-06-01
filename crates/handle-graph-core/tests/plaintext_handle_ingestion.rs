@@ -170,13 +170,18 @@ fn plaintext_handle_key_distinguishes_handle_id_across_chain_id_and_contract_add
         ));
     }
 
-    assert_eq!(core.canonical_handle(&first).map(|r| r.handle_key), Some(first));
     assert_eq!(
-        core.canonical_handle(&different_chain).map(|r| r.handle_key),
+        core.canonical_handle(&first).map(|record| record.handle_key),
+        Some(first)
+    );
+    assert_eq!(
+        core.canonical_handle(&different_chain)
+            .map(|record| record.handle_key),
         Some(different_chain)
     );
     assert_eq!(
-        core.canonical_handle(&different_contract).map(|r| r.handle_key),
+        core.canonical_handle(&different_contract)
+            .map(|record| record.handle_key),
         Some(different_contract)
     );
 }
