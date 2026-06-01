@@ -9,7 +9,7 @@ fn plaintext_handle_suint256_chain_event_creates_ready_canonical_record() {
     let handle_key = handle_key(1, 7, 42);
     let event_ref = chain_event_ref(1, 10, 3);
 
-    core.apply_chain_event(plaintext_handle_event(
+    let _ = core.apply_chain_event(plaintext_handle_event(
         handle_key,
         event_ref,
         HandleType::Suint256,
@@ -36,7 +36,7 @@ fn plaintext_handle_sbool_chain_event_creates_ready_canonical_record() {
     let handle_key = handle_key(1, 7, 100);
     let event_ref = chain_event_ref(1, 10, 5);
 
-    core.apply_chain_event(plaintext_handle_event(
+    let _ = core.apply_chain_event(plaintext_handle_event(
         handle_key,
         event_ref,
         HandleType::Sbool,
@@ -59,7 +59,7 @@ fn plaintext_handle_ready_state_carries_opaque_ciphertext_and_receipt() {
     let handle_key = handle_key(1, 7, 42);
     let event_ref = chain_event_ref(1, 10, 3);
 
-    core.apply_chain_event(plaintext_handle_event(
+    let _ = core.apply_chain_event(plaintext_handle_event(
         handle_key,
         event_ref,
         HandleType::Suint256,
@@ -81,6 +81,7 @@ fn plaintext_handle_ready_state_carries_opaque_ciphertext_and_receipt() {
                 "Ready must carry an opaque placeholder Materialization Receipt"
             );
         }
+        other => panic!("expected Ready plaintext handle, got {:?}", other),
     }
 }
 
@@ -94,7 +95,7 @@ fn plaintext_handle_does_not_store_public_plaintext_value_as_ciphertext() {
     let event_ref = chain_event_ref(1, 10, 3);
     let raw_public_value = vec![0xDE, 0xAD, 0xBE, 0xEF];
 
-    core.apply_chain_event(plaintext_handle_event(
+    let _ = core.apply_chain_event(plaintext_handle_event(
         handle_key,
         event_ref,
         HandleType::Suint256,
@@ -118,6 +119,7 @@ fn plaintext_handle_does_not_store_public_plaintext_value_as_ciphertext() {
                  not the raw Public Plaintext Value bytes"
             );
         }
+        other => panic!("expected Ready plaintext handle, got {:?}", other),
     }
 }
 
@@ -127,7 +129,7 @@ fn re_consuming_same_plaintext_chain_event_ref_does_not_replace_record() {
     let handle_key = handle_key(1, 7, 42);
     let event_ref = chain_event_ref(1, 10, 3);
 
-    core.apply_chain_event(plaintext_handle_event(
+    let _ = core.apply_chain_event(plaintext_handle_event(
         handle_key,
         event_ref,
         HandleType::Suint256,
@@ -136,7 +138,7 @@ fn re_consuming_same_plaintext_chain_event_ref_does_not_replace_record() {
 
     let original = core.canonical_handle(&handle_key).cloned().unwrap();
 
-    core.apply_chain_event(plaintext_handle_event(
+    let _ = core.apply_chain_event(plaintext_handle_event(
         handle_key,
         event_ref,
         HandleType::Sbool,
@@ -162,7 +164,7 @@ fn plaintext_handle_key_distinguishes_handle_id_across_chain_id_and_contract_add
         (different_chain, chain_event_ref(2, 10, 2), vec![2]),
         (different_contract, chain_event_ref(1, 10, 3), vec![3]),
     ] {
-        core.apply_chain_event(plaintext_handle_event(
+        let _ = core.apply_chain_event(plaintext_handle_event(
             handle_key,
             event_ref,
             HandleType::Suint256,
@@ -171,7 +173,8 @@ fn plaintext_handle_key_distinguishes_handle_id_across_chain_id_and_contract_add
     }
 
     assert_eq!(
-        core.canonical_handle(&first).map(|record| record.handle_key),
+        core.canonical_handle(&first)
+            .map(|record| record.handle_key),
         Some(first)
     );
     assert_eq!(
