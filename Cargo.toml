@@ -1,3 +1,3 @@
 [workspace]
-members = ["crates/handle-graph-core"]
+members = ["crates/coprocessor-host", "crates/handle-graph-core"]
 resolver = "2"
