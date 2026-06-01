@@ -684,6 +684,365 @@ fn select_with_mismatched_branch_types_is_wrong_input_type_at_index_two() {
     }
 }
 
+#[test]
+fn sub_with_two_suint256_inputs_produces_pending_suint256() {
+    let mut core = HandleGraphCore::new();
+    let (a, b) = seed_suint_pair(&mut core, 1, 2);
+    let derived = handle_key(1, 7, 200);
+
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
+        derived,
+        OperationCode::Sub,
+        HandleType::Suint256,
+        vec![a, b],
+        chain_event_ref(1, 2, 1),
+        DEFAULT_DOMAIN,
+    )));
+
+    let record = core.canonical_handle(&derived).expect("derived stored");
+    assert_eq!(record.handle_type, HandleType::Suint256);
+    assert_eq!(record.state, HandleState::Pending);
+    assert_eq!(
+        record.lineage,
+        HandleLineage::Derived {
+            operation_code: OperationCode::Sub,
+            input_handle_keys: vec![a, b],
+        }
+    );
+}
+
+#[test]
+fn sub_with_sbool_input_is_wrong_input_type() {
+    let mut core = HandleGraphCore::new();
+    let suint = handle_key(1, 7, 210);
+    let sbool = handle_key(1, 7, 211);
+    seed_imported(
+        &mut core,
+        suint,
+        HandleType::Suint256,
+        chain_event_ref(1, 1, 1),
+    );
+    seed_imported(
+        &mut core,
+        sbool,
+        HandleType::Sbool,
+        chain_event_ref(1, 1, 2),
+    );
+    let derived = handle_key(1, 7, 212);
+
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
+        derived,
+        OperationCode::Sub,
+        HandleType::Suint256,
+        vec![suint, sbool],
+        chain_event_ref(1, 2, 1),
+        DEFAULT_DOMAIN,
+    )));
+
+    let record = core.canonical_handle(&derived).expect("failed");
+    match &record.state {
+        HandleState::Failed {
+            reason:
+                FailureReason::OperationViolation(OperationViolation::WrongInputHandleType {
+                    input_index,
+                    expected,
+                    actual,
+                }),
+        } => {
+            assert_eq!(*input_index, 1);
+            assert_eq!(*expected, HandleType::Suint256);
+            assert_eq!(*actual, HandleType::Sbool);
+        }
+        other => panic!("expected WrongInputHandleType, got {:?}", other),
+    }
+}
+
+#[test]
+fn lt_with_two_suint256_inputs_produces_pending_sbool() {
+    let mut core = HandleGraphCore::new();
+    let (a, b) = seed_suint_pair(&mut core, 1, 2);
+    let derived = handle_key(1, 7, 220);
+
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
+        derived,
+        OperationCode::Lt,
+        HandleType::Sbool,
+        vec![a, b],
+        chain_event_ref(1, 2, 1),
+        DEFAULT_DOMAIN,
+    )));
+
+    let record = core.canonical_handle(&derived).expect("derived stored");
+    assert_eq!(record.handle_type, HandleType::Sbool);
+    assert_eq!(record.state, HandleState::Pending);
+}
+
+#[test]
+fn lt_with_suint256_output_is_wrong_output_type() {
+    let mut core = HandleGraphCore::new();
+    let (a, b) = seed_suint_pair(&mut core, 1, 2);
+    let derived = handle_key(1, 7, 221);
+
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
+        derived,
+        OperationCode::Lt,
+        HandleType::Suint256,
+        vec![a, b],
+        chain_event_ref(1, 2, 1),
+        DEFAULT_DOMAIN,
+    )));
+
+    let record = core.canonical_handle(&derived).expect("failed");
+    match &record.state {
+        HandleState::Failed {
+            reason:
+                FailureReason::OperationViolation(OperationViolation::WrongOutputHandleType {
+                    expected,
+                    actual,
+                }),
+        } => {
+            assert_eq!(*expected, HandleType::Sbool);
+            assert_eq!(*actual, HandleType::Suint256);
+        }
+        other => panic!("expected WrongOutputHandleType, got {:?}", other),
+    }
+}
+
+#[test]
+fn lte_with_two_suint256_inputs_produces_pending_sbool() {
+    let mut core = HandleGraphCore::new();
+    let (a, b) = seed_suint_pair(&mut core, 1, 2);
+    let derived = handle_key(1, 7, 230);
+
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
+        derived,
+        OperationCode::Lte,
+        HandleType::Sbool,
+        vec![a, b],
+        chain_event_ref(1, 2, 1),
+        DEFAULT_DOMAIN,
+    )));
+
+    let record = core.canonical_handle(&derived).expect("derived stored");
+    assert_eq!(record.handle_type, HandleType::Sbool);
+    assert_eq!(record.state, HandleState::Pending);
+}
+
+#[test]
+fn lte_with_one_input_is_wrong_arity() {
+    let mut core = HandleGraphCore::new();
+    let (a, _) = seed_suint_pair(&mut core, 1, 2);
+    let derived = handle_key(1, 7, 231);
+
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
+        derived,
+        OperationCode::Lte,
+        HandleType::Sbool,
+        vec![a],
+        chain_event_ref(1, 2, 1),
+        DEFAULT_DOMAIN,
+    )));
+
+    let record = core.canonical_handle(&derived).expect("failed");
+    assert!(matches!(
+        record.state,
+        HandleState::Failed {
+            reason: FailureReason::OperationViolation(OperationViolation::WrongArity {
+                operation_code: OperationCode::Lte,
+                expected: 2,
+                actual: 1,
+            }),
+        }
+    ));
+}
+
+#[test]
+fn gt_with_two_suint256_inputs_produces_pending_sbool() {
+    let mut core = HandleGraphCore::new();
+    let (a, b) = seed_suint_pair(&mut core, 1, 2);
+    let derived = handle_key(1, 7, 240);
+
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
+        derived,
+        OperationCode::Gt,
+        HandleType::Sbool,
+        vec![a, b],
+        chain_event_ref(1, 2, 1),
+        DEFAULT_DOMAIN,
+    )));
+
+    let record = core.canonical_handle(&derived).expect("derived stored");
+    assert_eq!(record.handle_type, HandleType::Sbool);
+    assert_eq!(record.state, HandleState::Pending);
+}
+
+#[test]
+fn gt_with_sbool_input_at_index_zero_is_wrong_input_type() {
+    let mut core = HandleGraphCore::new();
+    let sbool = handle_key(1, 7, 250);
+    let suint = handle_key(1, 7, 251);
+    seed_imported(
+        &mut core,
+        sbool,
+        HandleType::Sbool,
+        chain_event_ref(1, 1, 1),
+    );
+    seed_imported(
+        &mut core,
+        suint,
+        HandleType::Suint256,
+        chain_event_ref(1, 1, 2),
+    );
+    let derived = handle_key(1, 7, 252);
+
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
+        derived,
+        OperationCode::Gt,
+        HandleType::Sbool,
+        vec![sbool, suint],
+        chain_event_ref(1, 2, 1),
+        DEFAULT_DOMAIN,
+    )));
+
+    let record = core.canonical_handle(&derived).expect("failed");
+    match &record.state {
+        HandleState::Failed {
+            reason:
+                FailureReason::OperationViolation(OperationViolation::WrongInputHandleType {
+                    input_index,
+                    expected,
+                    actual,
+                }),
+        } => {
+            assert_eq!(*input_index, 0);
+            assert_eq!(*expected, HandleType::Suint256);
+            assert_eq!(*actual, HandleType::Sbool);
+        }
+        other => panic!("expected WrongInputHandleType at index 0, got {:?}", other),
+    }
+}
+
+#[test]
+fn gte_with_two_suint256_inputs_produces_pending_sbool() {
+    let mut core = HandleGraphCore::new();
+    let (a, b) = seed_suint_pair(&mut core, 1, 2);
+    let derived = handle_key(1, 7, 250);
+
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
+        derived,
+        OperationCode::Gte,
+        HandleType::Sbool,
+        vec![a, b],
+        chain_event_ref(1, 2, 1),
+        DEFAULT_DOMAIN,
+    )));
+
+    let record = core.canonical_handle(&derived).expect("derived stored");
+    assert_eq!(record.handle_type, HandleType::Sbool);
+    assert_eq!(record.state, HandleState::Pending);
+}
+
+#[test]
+fn gte_with_three_inputs_is_wrong_arity() {
+    let mut core = HandleGraphCore::new();
+    let (a, b) = seed_suint_pair(&mut core, 1, 2);
+    let c = handle_key(1, 7, 253);
+    seed_imported(
+        &mut core,
+        c,
+        HandleType::Suint256,
+        chain_event_ref(1, 1, 3),
+    );
+    let derived = handle_key(1, 7, 254);
+
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
+        derived,
+        OperationCode::Gte,
+        HandleType::Sbool,
+        vec![a, b, c],
+        chain_event_ref(1, 2, 1),
+        DEFAULT_DOMAIN,
+    )));
+
+    let record = core.canonical_handle(&derived).expect("failed");
+    assert!(matches!(
+        record.state,
+        HandleState::Failed {
+            reason: FailureReason::OperationViolation(OperationViolation::WrongArity {
+                operation_code: OperationCode::Gte,
+                expected: 2,
+                actual: 3,
+            }),
+        }
+    ));
+}
+
+#[test]
+fn or_with_two_sbool_inputs_produces_pending_sbool() {
+    let mut core = HandleGraphCore::new();
+    let (a, b) = seed_sbool_pair(&mut core, 3, 4);
+    let derived = handle_key(1, 7, 240);
+
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
+        derived,
+        OperationCode::Or,
+        HandleType::Sbool,
+        vec![a, b],
+        chain_event_ref(1, 2, 1),
+        DEFAULT_DOMAIN,
+    )));
+
+    let record = core.canonical_handle(&derived).expect("derived stored");
+    assert_eq!(record.handle_type, HandleType::Sbool);
+    assert_eq!(record.state, HandleState::Pending);
+}
+
+#[test]
+fn or_with_suint256_input_is_wrong_input_type() {
+    let mut core = HandleGraphCore::new();
+    let suint = handle_key(1, 7, 241);
+    let sbool = handle_key(1, 7, 242);
+    seed_imported(
+        &mut core,
+        suint,
+        HandleType::Suint256,
+        chain_event_ref(1, 1, 1),
+    );
+    seed_imported(
+        &mut core,
+        sbool,
+        HandleType::Sbool,
+        chain_event_ref(1, 1, 2),
+    );
+    let derived = handle_key(1, 7, 243);
+
+    let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
+        derived,
+        OperationCode::Or,
+        HandleType::Sbool,
+        vec![suint, sbool],
+        chain_event_ref(1, 2, 1),
+        DEFAULT_DOMAIN,
+    )));
+
+    let record = core.canonical_handle(&derived).expect("failed");
+    match &record.state {
+        HandleState::Failed {
+            reason:
+                FailureReason::OperationViolation(OperationViolation::WrongInputHandleType {
+                    input_index,
+                    expected,
+                    actual,
+                }),
+        } => {
+            assert_eq!(*input_index, 0);
+            assert_eq!(*expected, HandleType::Sbool);
+            assert_eq!(*actual, HandleType::Suint256);
+        }
+        other => panic!("expected WrongInputHandleType at index 0, got {:?}", other),
+    }
+}
+
 fn seed_suint_pair(core: &mut HandleGraphCore, a_seed: u8, b_seed: u8) -> (HandleKey, HandleKey) {
     let a = handle_key(1, 7, a_seed);
     let b = handle_key(1, 7, b_seed);
