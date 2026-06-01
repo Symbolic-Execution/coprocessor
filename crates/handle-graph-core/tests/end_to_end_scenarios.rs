@@ -413,10 +413,10 @@ fn unknown_handle_key_is_reported_unknown_on_both_canonical_and_audit_paths() {
 // Acceptance criteria exercised:
 //   * Covers Orphan Discard of a Source Handle and cascade to downstream
 //     Derived Handles, including multi-hop descendants.
-// * Covers canonical queries hiding tombstoned records.
-// * Covers audit/debug queries inspecting tombstoned records (event_ref,
+//   * Covers canonical queries hiding tombstoned records.
+//   * Covers audit/debug queries inspecting tombstoned records (event_ref,
 //     handle_type, original state, tombstone flag).
-// * Cascade-tombstoned handles drop out of Resolution Readiness.
+//   * Cascade-tombstoned handles drop out of Resolution Readiness.
 // ---------------------------------------------------------------------------
 
 #[test]
