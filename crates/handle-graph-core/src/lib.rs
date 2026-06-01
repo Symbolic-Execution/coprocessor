@@ -158,6 +158,20 @@ pub enum IngestionOutcome {
     DuplicateHandleKeyRejected(HandleRecord),
 }
 
+/// Snapshot of a Pending Derived Handle whose ordered input Handles are all
+/// canonical and Ready. Carries everything a future Resolution Scheduler needs
+/// to build a Resolution Task without re-walking the graph: the target Handle
+/// Key, its OperationCode and output HandleType, and the ordered input Handle
+/// Keys paired by index with the ready input `SystemCiphertextV1` values.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolutionReadiness {
+    pub handle_key: HandleKey,
+    pub operation_code: OperationCode,
+    pub output_handle_type: HandleType,
+    pub input_handle_keys: Vec<HandleKey>,
+    pub input_system_ciphertexts: Vec<SystemCiphertextV1>,
+}
+
 #[derive(Default)]
 pub struct HandleGraphCore {
     records: HashMap<HandleKey, HandleRecord>,
@@ -184,6 +198,55 @@ impl HandleGraphCore {
 
     pub fn canonical_handle(&self, handle_key: &HandleKey) -> Option<&HandleRecord> {
         self.records.get(handle_key)
+    }
+
+    /// Reports every canonical Pending Derived Handle whose ordered inputs are
+    /// all canonical and Ready. Results carry the input `SystemCiphertextV1`
+    /// values in the same order as the input Handle Keys; Select inputs stay
+    /// in predicate, when-true, when-false order. Failed Derived Handles and
+    /// Derived Handles with any non-Ready or non-canonical input are excluded.
+    /// This slice only reports readiness — it does not build Resolution Tasks
+    /// and does not perform Resolution.
+    pub fn resolution_readiness(&self) -> Vec<ResolutionReadiness> {
+        self.records
+            .values()
+            .filter_map(|record| self.readiness_for(record))
+            .collect()
+    }
+
+    fn readiness_for(&self, record: &HandleRecord) -> Option<ResolutionReadiness> {
+        if !record.is_canonical || record.state != HandleState::Pending {
+            return None;
+        }
+        let HandleLineage::Derived {
+            operation_code,
+            ref input_handle_keys,
+        } = record.lineage
+        else {
+            return None;
+        };
+        let mut input_system_ciphertexts = Vec::with_capacity(input_handle_keys.len());
+        for input_key in input_handle_keys {
+            let input_record = self.records.get(input_key)?;
+            if !input_record.is_canonical {
+                return None;
+            }
+            let HandleState::Ready {
+                ref system_ciphertext,
+                ..
+            } = input_record.state
+            else {
+                return None;
+            };
+            input_system_ciphertexts.push(system_ciphertext.clone());
+        }
+        Some(ResolutionReadiness {
+            handle_key: record.handle_key,
+            operation_code,
+            output_handle_type: record.handle_type,
+            input_handle_keys: input_handle_keys.clone(),
+            input_system_ciphertexts,
+        })
     }
 
     fn apply_imported(&mut self, imported: ImportedHandle) -> IngestionOutcome {
