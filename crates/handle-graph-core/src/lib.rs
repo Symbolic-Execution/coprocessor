@@ -109,6 +109,12 @@ pub struct HandleRecord {
     pub event_ref: ChainEventRef,
     pub is_canonical: bool,
     pub lineage: HandleLineage,
+    /// Set to `true` by [`HandleGraphCore::apply_orphan_discard`] when the
+    /// record (or one of its lineage ancestors) was discarded. Tombstoned
+    /// records are retained for audit and continue to expose their original
+    /// `event_ref` and `state`, but are hidden from canonical queries and
+    /// Resolution Readiness. Tombstoning is not a `Failed` Handle State.
+    pub is_tombstoned: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -158,6 +164,16 @@ pub enum IngestionOutcome {
     DuplicateHandleKeyRejected(HandleRecord),
 }
 
+/// Result of [`HandleGraphCore::apply_orphan_discard`]. Reports the Handle
+/// Keys tombstoned directly because their `event_ref` was supplied, and the
+/// Handle Keys tombstoned through Handle Lineage cascade. A key appears in
+/// at most one of the two lists.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct OrphanDiscardOutcome {
+    pub directly_tombstoned: Vec<HandleKey>,
+    pub cascade_tombstoned: Vec<HandleKey>,
+}
+
 /// Snapshot of a Pending Derived Handle whose ordered input Handles are all
 /// canonical and Ready. Carries everything a future Resolution Scheduler needs
 /// to build a Resolution Task without re-walking the graph: the target Handle
@@ -196,8 +212,99 @@ impl HandleGraphCore {
         }
     }
 
+    /// Returns the canonical Handle Record for `handle_key`. Tombstoned
+    /// records (see [`HandleGraphCore::apply_orphan_discard`]) are hidden from
+    /// this query and appear unknown to normal API behavior.
     pub fn canonical_handle(&self, handle_key: &HandleKey) -> Option<&HandleRecord> {
+        self.records
+            .get(handle_key)
+            .filter(|record| !record.is_tombstoned)
+    }
+
+    /// Returns any retained Handle Record, including tombstoned records. This
+    /// is the audit/debug path: it lets operators inspect the preserved
+    /// `event_ref`, `state`, and lineage of records hidden from canonical
+    /// reads. It is not part of the Internal Coordinator API surface.
+    pub fn handle_record_for_audit(&self, handle_key: &HandleKey) -> Option<&HandleRecord> {
         self.records.get(handle_key)
+    }
+
+    /// Applies a manually supplied set of canonicality changes by tombstoning
+    /// every Handle Record whose `event_ref` matches one of
+    /// `orphaned_event_refs`, then cascades the tombstone through Handle
+    /// Lineage: any Derived Handle whose inputs include a tombstoned record is
+    /// itself tombstoned, transitively. Cascade applies even when the
+    /// downstream Derived Handle's own `event_ref` is still canonical.
+    ///
+    /// Tombstoning is not a `Failed` Handle State and never deletes records;
+    /// the underlying `event_ref` and `state` remain available through
+    /// [`HandleGraphCore::handle_record_for_audit`]. Tombstoned records are
+    /// excluded from [`HandleGraphCore::canonical_handle`] and from
+    /// [`HandleGraphCore::resolution_readiness`].
+    pub fn apply_orphan_discard(
+        &mut self,
+        orphaned_event_refs: &[ChainEventRef],
+    ) -> OrphanDiscardOutcome {
+        let orphaned: HashSet<ChainEventRef> = orphaned_event_refs.iter().copied().collect();
+
+        let directly_tombstoned: Vec<HandleKey> = self
+            .records
+            .iter()
+            .filter(|(_, record)| !record.is_tombstoned && orphaned.contains(&record.event_ref))
+            .map(|(key, _)| *key)
+            .collect();
+        self.mark_tombstoned(&directly_tombstoned);
+
+        let mut cascade_tombstoned: Vec<HandleKey> = Vec::new();
+        loop {
+            let newly_tombstoned: Vec<HandleKey> = self
+                .records
+                .iter()
+                .filter(|(_, record)| self.depends_on_tombstoned_input(record))
+                .map(|(key, _)| *key)
+                .collect();
+            if newly_tombstoned.is_empty() {
+                break;
+            }
+            self.mark_tombstoned(&newly_tombstoned);
+            cascade_tombstoned.extend(newly_tombstoned);
+        }
+
+        OrphanDiscardOutcome {
+            directly_tombstoned,
+            cascade_tombstoned,
+        }
+    }
+
+    /// Marks every record in `keys` as tombstoned. Keys with no matching
+    /// record are silently skipped.
+    fn mark_tombstoned(&mut self, keys: &[HandleKey]) {
+        for key in keys {
+            if let Some(record) = self.records.get_mut(key) {
+                record.is_tombstoned = true;
+            }
+        }
+    }
+
+    /// True when `record` is itself still canonical but has at least one
+    /// tombstoned input handle in its lineage. The cascade pass tombstones
+    /// every such record.
+    fn depends_on_tombstoned_input(&self, record: &HandleRecord) -> bool {
+        if record.is_tombstoned {
+            return false;
+        }
+        let HandleLineage::Derived {
+            ref input_handle_keys,
+            ..
+        } = record.lineage
+        else {
+            return false;
+        };
+        input_handle_keys.iter().any(|input_key| {
+            self.records
+                .get(input_key)
+                .is_some_and(|input_record| input_record.is_tombstoned)
+        })
     }
 
     /// Reports every canonical Pending Derived Handle whose ordered inputs are
@@ -215,7 +322,7 @@ impl HandleGraphCore {
     }
 
     fn readiness_for(&self, record: &HandleRecord) -> Option<ResolutionReadiness> {
-        if !record.is_canonical || record.state != HandleState::Pending {
+        if record.is_tombstoned || !record.is_canonical || record.state != HandleState::Pending {
             return None;
         }
         let HandleLineage::Derived {
@@ -228,7 +335,7 @@ impl HandleGraphCore {
         let mut input_system_ciphertexts = Vec::with_capacity(input_handle_keys.len());
         for input_key in input_handle_keys {
             let input_record = self.records.get(input_key)?;
-            if !input_record.is_canonical {
+            if input_record.is_tombstoned || !input_record.is_canonical {
                 return None;
             }
             let HandleState::Ready {
@@ -271,6 +378,7 @@ impl HandleGraphCore {
             event_ref: imported.event_ref,
             is_canonical: true,
             lineage: HandleLineage::Source,
+            is_tombstoned: false,
         };
         self.records.insert(imported.handle_key, record.clone());
         IngestionOutcome::Recorded(record)
@@ -300,6 +408,7 @@ impl HandleGraphCore {
             event_ref: plaintext.event_ref,
             is_canonical: true,
             lineage: HandleLineage::Source,
+            is_tombstoned: false,
         };
         self.records.insert(plaintext.handle_key, record.clone());
         IngestionOutcome::Recorded(record)
@@ -337,6 +446,7 @@ impl HandleGraphCore {
             event_ref: op.event_ref,
             is_canonical: true,
             lineage,
+            is_tombstoned: false,
         };
         self.records.insert(op.handle_key, record.clone());
         IngestionOutcome::Recorded(record)
@@ -363,6 +473,7 @@ impl HandleGraphCore {
                 event_ref,
                 is_canonical: true,
                 lineage,
+                is_tombstoned: false,
             })
         })
     }
