@@ -253,11 +253,7 @@ impl HandleGraphCore {
             .filter(|(_, record)| !record.is_tombstoned && orphaned.contains(&record.event_ref))
             .map(|(key, _)| *key)
             .collect();
-        for key in &directly_tombstoned {
-            if let Some(record) = self.records.get_mut(key) {
-                record.is_tombstoned = true;
-            }
-        }
+        self.mark_tombstoned(&directly_tombstoned);
 
         let mut cascade_tombstoned: Vec<HandleKey> = Vec::new();
         loop {
@@ -270,17 +266,23 @@ impl HandleGraphCore {
             if newly_tombstoned.is_empty() {
                 break;
             }
-            for key in &newly_tombstoned {
-                if let Some(record) = self.records.get_mut(key) {
-                    record.is_tombstoned = true;
-                }
-            }
+            self.mark_tombstoned(&newly_tombstoned);
             cascade_tombstoned.extend(newly_tombstoned);
         }
 
         OrphanDiscardOutcome {
             directly_tombstoned,
             cascade_tombstoned,
+        }
+    }
+
+    /// Marks every record in `keys` as tombstoned. Keys with no matching
+    /// record are silently skipped.
+    fn mark_tombstoned(&mut self, keys: &[HandleKey]) {
+        for key in keys {
+            if let Some(record) = self.records.get_mut(key) {
+                record.is_tombstoned = true;
+            }
         }
     }
 
