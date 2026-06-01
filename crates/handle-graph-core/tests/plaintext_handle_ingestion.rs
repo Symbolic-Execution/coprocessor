@@ -171,7 +171,8 @@ fn plaintext_handle_key_distinguishes_handle_id_across_chain_id_and_contract_add
     }
 
     assert_eq!(
-        core.canonical_handle(&first).map(|record| record.handle_key),
+        core.canonical_handle(&first)
+            .map(|record| record.handle_key),
         Some(first)
     );
     assert_eq!(
