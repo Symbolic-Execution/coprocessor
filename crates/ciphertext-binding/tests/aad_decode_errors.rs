@@ -150,6 +150,22 @@ fn wrong_array_length_surfaces_wrong_length_error_for_each_kind() {
         }
     );
 
+    // SystemHandle should be 7. Truncate to 6 the same way: strip the final
+    // key_id (`0x58 32` + 32 bytes = 34 bytes) and shorten the array header.
+    let mut bytes = sample_system_handle().encode();
+    let new_len = bytes.len() - 34;
+    bytes.truncate(new_len);
+    bytes[0] = 0x80 | 6;
+    let err = SystemHandleAadV1::decode(&bytes).unwrap_err();
+    assert_eq!(
+        err,
+        AadDecodeError::WrongLength {
+            kind: AadKind::SystemHandle,
+            expected: 7,
+            actual: 6,
+        }
+    );
+
     // Enclave should be 9. Extend to 10 by appending an extra uint(0) and
     // bumping the array header from 0x89 to 0x8a.
     let mut bytes = sample_enclave().encode();
@@ -160,6 +176,20 @@ fn wrong_array_length_surfaces_wrong_length_error_for_each_kind() {
         err,
         AadDecodeError::WrongLength {
             kind: AadKind::Enclave,
+            expected: 9,
+            actual: 10,
+        }
+    );
+
+    // Reader should be 9. Extend to 10 the same way.
+    let mut bytes = sample_reader().encode();
+    bytes[0] = 0x80 | 10;
+    bytes.push(0x00);
+    let err = ReaderAadV1::decode(&bytes).unwrap_err();
+    assert_eq!(
+        err,
+        AadDecodeError::WrongLength {
+            kind: AadKind::Reader,
             expected: 9,
             actual: 10,
         }
