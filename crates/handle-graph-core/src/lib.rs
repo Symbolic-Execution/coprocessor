@@ -1,5 +1,21 @@
 use std::collections::{HashMap, HashSet};
 
+pub mod persistence;
+
+pub use persistence::{HandlePersistence, InMemoryHandlePersistence};
+
+mod chain_log_decoder;
+mod plaintext_materialization;
+
+pub use chain_log_decoder::{
+    decode_chain_log, ChainLog, ChainLogDecodeError, HANDLE_FROM_PLAINTEXT_V1_SIGNATURE,
+    HANDLE_IMPORTED_V1_SIGNATURE, OPERATION_REQUESTED_V1_SIGNATURE,
+};
+pub use plaintext_materialization::{
+    type_tag_for_handle_type, MaterializedPlaintextHandle, PlaintextMaterializer, SBOOL_TYPE_TAG,
+    SUINT256_TYPE_TAG,
+};
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ChainId(pub u64);
 
@@ -28,8 +44,14 @@ pub enum HandleType {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OperationCode {
     Add,
+    Sub,
     Eq,
+    Lt,
+    Lte,
+    Gt,
+    Gte,
     And,
+    Or,
     Not,
     Select,
 }
@@ -192,11 +214,25 @@ pub struct ResolutionReadiness {
 pub struct HandleGraphCore {
     records: HashMap<HandleKey, HandleRecord>,
     consumed_events: HashSet<ChainEventRef>,
+    plaintext_materializer: PlaintextMaterializer,
 }
 
 impl HandleGraphCore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Construct a [`HandleGraphCore`] that materializes Plaintext Handles
+    /// through `plaintext_materializer`. The host populates the materializer
+    /// from the MPC public configuration's active `key_id` before any
+    /// Plaintext Handle ingestion happens, so every Ready Plaintext Handle
+    /// carries an AAD bound to the currently-active MPC key.
+    pub fn with_plaintext_materializer(plaintext_materializer: PlaintextMaterializer) -> Self {
+        Self {
+            records: HashMap::new(),
+            consumed_events: HashSet::new(),
+            plaintext_materializer,
+        }
     }
 
     pub fn apply_chain_event(&mut self, event: ChainEvent) -> IngestionOutcome {
@@ -209,6 +245,76 @@ impl HandleGraphCore {
             ChainEvent::ImportedHandle(imported) => self.apply_imported(imported),
             ChainEvent::PlaintextHandle(plaintext) => self.apply_plaintext(plaintext),
             ChainEvent::DerivedHandleOperation(op) => self.apply_derived(op),
+        }
+    }
+
+    /// Applies a Chain Event and mirrors the resulting durable state into
+    /// `persistence`. Returns the same [`IngestionOutcome`] as
+    /// [`HandleGraphCore::apply_chain_event`].
+    ///
+    /// Persistence ordering: when a canonical record is created, the record is
+    /// written first, then the Chain Event is marked consumed. A crash between
+    /// the two leaves the next restart with the record present and the event
+    /// not-yet-consumed; the next replay of the same event surfaces
+    /// [`IngestionOutcome::DuplicateHandleKeyRejected`] for the second attempt,
+    /// preserving the first canonical record. A canonical rejected duplicate
+    /// is intentionally not persisted — only the consumed event ref is — so
+    /// the store reflects exactly the records the Handle Graph retains.
+    pub fn apply_chain_event_with_persistence<P: HandlePersistence>(
+        &mut self,
+        event: ChainEvent,
+        persistence: &mut P,
+    ) -> IngestionOutcome {
+        let outcome = self.apply_chain_event(event);
+        let consumed_event_ref = match &outcome {
+            IngestionOutcome::Recorded(record) => {
+                persistence.put_handle_record(record.clone());
+                Some(record.event_ref)
+            }
+            IngestionOutcome::DuplicateHandleKeyRejected(rejected) => Some(rejected.event_ref),
+            IngestionOutcome::Idempotent => None,
+        };
+        if let Some(event_ref) = consumed_event_ref {
+            persistence.record_consumed_event(event_ref);
+        }
+        outcome
+    }
+
+    /// Rebuilds a [`HandleGraphCore`] from a previously written
+    /// [`HandlePersistence`]. After restart this is the entry point that
+    /// re-seeds the in-process record map and the consumed-event set, so
+    /// ingestion replay remains idempotent by [`ChainEventRef`] and canonical
+    /// reads return the same Handle Records observed before the restart.
+    ///
+    /// The restored graph uses [`PlaintextMaterializer::default`]; callers
+    /// that subsequently ingest Plaintext Handle events should construct the
+    /// graph with [`HandleGraphCore::restore_from_persistence_with_materializer`]
+    /// so the materializer carries the host's active MPC key id.
+    pub fn restore_from_persistence<P: HandlePersistence>(persistence: &P) -> Self {
+        Self::restore_from_persistence_with_materializer(
+            persistence,
+            PlaintextMaterializer::default(),
+        )
+    }
+
+    /// Same as [`HandleGraphCore::restore_from_persistence`], but binds the
+    /// supplied `plaintext_materializer` so post-restart Plaintext Handle
+    /// ingestion keeps producing real `SystemCiphertextV1` envelopes bound to
+    /// the host's active MPC key id.
+    pub fn restore_from_persistence_with_materializer<P: HandlePersistence>(
+        persistence: &P,
+        plaintext_materializer: PlaintextMaterializer,
+    ) -> Self {
+        let records: HashMap<HandleKey, HandleRecord> = persistence
+            .handle_records()
+            .into_iter()
+            .map(|record| (record.handle_key, record))
+            .collect();
+        let consumed_events = persistence.consumed_events().into_iter().collect();
+        Self {
+            records,
+            consumed_events,
+            plaintext_materializer,
         }
     }
 
@@ -274,6 +380,33 @@ impl HandleGraphCore {
             directly_tombstoned,
             cascade_tombstoned,
         }
+    }
+
+    /// Applies an Orphan Discard and mirrors every flipped Handle Record into
+    /// `persistence`. Returns the same [`OrphanDiscardOutcome`] as
+    /// [`HandleGraphCore::apply_orphan_discard`].
+    ///
+    /// The tombstone flag is the only field that changes during Orphan
+    /// Discard, but the whole record is re-put so the persistence backend
+    /// does not need a separate "update flag" operation. Cascade-tombstoned
+    /// records are written in addition to directly-tombstoned ones so a
+    /// restart restores the full cascade rather than the discard root only.
+    pub fn apply_orphan_discard_with_persistence<P: HandlePersistence>(
+        &mut self,
+        orphaned_event_refs: &[ChainEventRef],
+        persistence: &mut P,
+    ) -> OrphanDiscardOutcome {
+        let outcome = self.apply_orphan_discard(orphaned_event_refs);
+        for key in outcome
+            .directly_tombstoned
+            .iter()
+            .chain(outcome.cascade_tombstoned.iter())
+        {
+            if let Some(record) = self.records.get(key) {
+                persistence.put_handle_record(record.clone());
+            }
+        }
+        outcome
     }
 
     /// Marks every record in `keys` as tombstoned. Keys with no matching
@@ -395,8 +528,10 @@ impl HandleGraphCore {
             return outcome;
         }
 
-        let system_ciphertext = placeholder_plaintext_system_ciphertext(&plaintext);
-        let materialization_receipt = placeholder_plaintext_receipt(&plaintext);
+        let MaterializedPlaintextHandle {
+            system_ciphertext,
+            materialization_receipt,
+        } = self.plaintext_materializer.materialize(&plaintext);
         let record = HandleRecord {
             domain_id: plaintext.domain_id,
             handle_key: plaintext.handle_key,
@@ -517,21 +652,17 @@ impl ChainEvent {
     }
 }
 
-fn placeholder_plaintext_system_ciphertext(plaintext: &PlaintextHandle) -> SystemCiphertextV1 {
-    let mut bytes = b"plaintext-system-ciphertext-v1-placeholder:".to_vec();
-    bytes.extend_from_slice(&plaintext.handle_key.handle_id.0);
-    SystemCiphertextV1(bytes)
-}
-
-fn placeholder_plaintext_receipt(plaintext: &PlaintextHandle) -> MaterializationReceipt {
-    let mut bytes = b"plaintext-materialization-receipt-v1-placeholder:".to_vec();
-    bytes.extend_from_slice(&plaintext.handle_key.handle_id.0);
-    MaterializationReceipt(bytes)
-}
-
 fn expected_arity(op: OperationCode) -> usize {
     match op {
-        OperationCode::Add | OperationCode::Eq | OperationCode::And => 2,
+        OperationCode::Add
+        | OperationCode::Sub
+        | OperationCode::Eq
+        | OperationCode::Lt
+        | OperationCode::Lte
+        | OperationCode::Gt
+        | OperationCode::Gte
+        | OperationCode::And
+        | OperationCode::Or => 2,
         OperationCode::Not => 1,
         OperationCode::Select => 3,
     }
@@ -558,15 +689,19 @@ fn validate_operation_types(
     output_type: HandleType,
 ) -> Result<(), OperationViolation> {
     match op {
-        OperationCode::Add => {
+        OperationCode::Add | OperationCode::Sub => {
             require_each_input(inputs, HandleType::Suint256)?;
             require_output(output_type, HandleType::Suint256)
         }
-        OperationCode::Eq => {
+        OperationCode::Eq
+        | OperationCode::Lt
+        | OperationCode::Lte
+        | OperationCode::Gt
+        | OperationCode::Gte => {
             require_each_input(inputs, HandleType::Suint256)?;
             require_output(output_type, HandleType::Sbool)
         }
-        OperationCode::And => {
+        OperationCode::And | OperationCode::Or => {
             require_each_input(inputs, HandleType::Sbool)?;
             require_output(output_type, HandleType::Sbool)
         }

@@ -14,8 +14,6 @@ Configure local credentials:
 cp .sandcastle/.env.example .sandcastle/.env
 ```
 
-Then set `GH_TOKEN` and, if needed, `CLAUDE_CODE_OAUTH_TOKEN` in
-`.sandcastle/.env`.
 
 Build the Sandcastle Docker image:
 

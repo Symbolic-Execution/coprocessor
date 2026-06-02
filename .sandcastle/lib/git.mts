@@ -46,13 +46,30 @@ export async function refreshDefaultBranch(
   await git(["merge", "--ff-only", `origin/${defaultBranch}`]);
 }
 
+export async function fetchRemoteBranch(
+  github: GithubConfig,
+  branch: string,
+) {
+  await git(
+    [
+      "fetch",
+      httpsRemoteUrl(github),
+      `+refs/heads/${branch}:refs/remotes/origin/${branch}`,
+    ],
+    { env: authenticatedGitEnv(github.token) },
+  );
+}
+
 export async function pushBranch(github: GithubConfig, branch: string) {
-  await fetchRemoteBranchIfExists(github, branch);
+  const remoteBranchExists = await fetchRemoteBranchIfExists(github, branch);
+  const lease = remoteBranchExists
+    ? await remoteTrackingBranchSha(branch)
+    : "";
 
   await git(
     [
       "push",
-      "--force-with-lease",
+      `--force-with-lease=refs/heads/${branch}:${lease}`,
       httpsRemoteUrl(github),
       `${branch}:refs/heads/${branch}`,
     ],
@@ -136,23 +153,23 @@ function httpsRemoteUrl(repo: GithubRepo) {
 
 async function fetchRemoteBranchIfExists(github: GithubConfig, branch: string) {
   try {
-    await git(
-      [
-        "fetch",
-        httpsRemoteUrl(github),
-        `+refs/heads/${branch}:refs/remotes/origin/${branch}`,
-      ],
-      { env: authenticatedGitEnv(github.token) },
-    );
+    await fetchRemoteBranch(github, branch);
+    return true;
   } catch (error) {
     if (
       error instanceof CommandError &&
       error.stderr.includes("couldn't find remote ref")
     ) {
-      return;
+      return false;
     }
     throw error;
   }
+}
+
+async function remoteTrackingBranchSha(branch: string) {
+  return (
+    await git(["rev-parse", `refs/remotes/origin/${branch}`])
+  ).stdout.trim();
 }
 
 export function redactSecrets(value: string, token?: string) {

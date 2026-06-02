@@ -70,7 +70,7 @@ export type PullRequest = {
 export function createGithubClient(github: GithubConfig) {
   return {
     getDefaultBranch: () => getDefaultBranch(github),
-    listOpenIssues: (label: string) => listOpenIssues(github, label),
+    listOpenIssues: (label?: string) => listOpenIssues(github, label),
     createOrUpdatePullRequest: (
       issue: PlannedIssue,
       defaultBranch: string,
@@ -99,20 +99,25 @@ async function getDefaultBranch(github: GithubConfig) {
   return repoInfo.defaultBranchRef.name;
 }
 
-async function listOpenIssues(github: GithubConfig, label: string) {
-  const rawIssues = await ghJson(github, ghIssueListSchema, [
+async function listOpenIssues(github: GithubConfig, label?: string) {
+  const args = [
     "issue",
     "list",
     "--repo",
     repository(github),
     "--state",
     "open",
-    "--label",
-    label,
     "--limit",
     "100",
     "--json",
     "number,title,body,labels,comments",
+  ];
+  if (label) {
+    args.push("--label", label);
+  }
+
+  const rawIssues = await ghJson(github, ghIssueListSchema, [
+    ...args,
   ]);
 
   return Promise.all(

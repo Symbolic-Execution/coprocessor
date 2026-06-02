@@ -3,12 +3,52 @@
 version = 4
 
 [[package]]
+name = "coprocessor-ciphertext-binding"
+version = "0.1.0"
+
+[[package]]
+name = "coprocessor-enclave-runtime"
+version = "0.1.0"
+dependencies = [
+ "coprocessor-ciphertext-binding",
+ "coprocessor-handle-graph-core",
+]
+
+[[package]]
 name = "coprocessor-handle-graph-core"
 version = "0.1.0"
+dependencies = [
+ "coprocessor-ciphertext-binding",
+]
 
 [[package]]
 name = "coprocessor-host"
 version = "0.1.0"
 dependencies = [
+ "coprocessor-handle-graph-core",
+]
+
+[[package]]
+name = "coprocessor-mpc-client"
+version = "0.1.0"
+dependencies = [
+ "coprocessor-ciphertext-binding",
+ "coprocessor-handle-graph-core",
+]
+
+[[package]]
+name = "coprocessor-mpc-config"
+version = "0.1.0"
+dependencies = [
+ "coprocessor-ciphertext-binding",
+ "coprocessor-handle-graph-core",
+ "coprocessor-transport-json",
+]
+
+[[package]]
+name = "coprocessor-transport-json"
+version = "0.1.0"
+dependencies = [
+ "coprocessor-ciphertext-binding",
  "coprocessor-handle-graph-core",
 ]

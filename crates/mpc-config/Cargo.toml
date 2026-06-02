@@ -1,0 +1,13 @@
+[package]
+name = "coprocessor-mpc-config"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "coprocessor_mpc_config"
+path = "src/lib.rs"
+
+[dependencies]
+coprocessor-ciphertext-binding = { path = "../ciphertext-binding" }
+coprocessor-handle-graph-core = { path = "../handle-graph-core" }
+coprocessor-transport-json = { path = "../transport-json" }

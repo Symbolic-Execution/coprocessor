@@ -1,11 +1,12 @@
 [package]
-name = "coprocessor-handle-graph-core"
+name = "coprocessor-transport-json"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "coprocessor_handle_graph_core"
+name = "coprocessor_transport_json"
 path = "src/lib.rs"
 
 [dependencies]
 coprocessor-ciphertext-binding = { path = "../ciphertext-binding" }
+coprocessor-handle-graph-core = { path = "../handle-graph-core" }
