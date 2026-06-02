@@ -10,7 +10,7 @@
 //! [`EnclaveMaterializationReceipt`]; plaintext Private Values never cross the
 //! trait surface.
 //!
-//! The sealing scheme is deliberately tiny and NOT cryptographic — it is a
+//! The sealing scheme is deliberately tiny and NOT cryptographic; it is a
 //! deterministic, AAD-bound keystream sufficient for tests to assert the
 //! boundary plumbing without standing up a real Enclave. Production runtimes
 //! (Nitro or otherwise) implement the same trait against attested key material
@@ -121,7 +121,12 @@ impl LocalEnclaveRuntime {
         input_handle_key: HandleKey,
         plaintext: [u8; 32],
     ) -> EnclaveCiphertextV1 {
-        self.seal_input(request_id, input_handle_key, SUINT256_TYPE_TAG, plaintext)
+        self.seal_input(
+            request_id,
+            input_handle_key,
+            type_tag_for_handle_type(HandleType::Suint256),
+            plaintext,
+        )
     }
 
     /// Test-only helper: seal an `sbool` value into an
@@ -136,7 +141,7 @@ impl LocalEnclaveRuntime {
         self.seal_input(
             request_id,
             input_handle_key,
-            SBOOL_TYPE_TAG,
+            type_tag_for_handle_type(HandleType::Sbool),
             bool_to_payload(value),
         )
     }
@@ -146,7 +151,7 @@ impl LocalEnclaveRuntime {
     /// belong to this runtime (wrong AAD shape, wrong key id, or wrong
     /// ciphertext length) or its AAD's `type_tag` is not `suint256`.
     pub fn unseal_suint256_output(&self, ciphertext: &SystemCiphertextV1) -> Option<[u8; 32]> {
-        self.unseal_output(ciphertext, SUINT256_TYPE_TAG)
+        self.unseal_output(ciphertext, type_tag_for_handle_type(HandleType::Suint256))
     }
 
     /// Test-only helper: unseal a [`SystemCiphertextV1`] produced by
@@ -154,7 +159,8 @@ impl LocalEnclaveRuntime {
     /// type tag. Returns `None` if the envelope does not belong to this
     /// runtime or its `type_tag` is not `sbool`.
     pub fn unseal_sbool_output(&self, ciphertext: &SystemCiphertextV1) -> Option<bool> {
-        let payload = self.unseal_output(ciphertext, SBOOL_TYPE_TAG)?;
+        let payload =
+            self.unseal_output(ciphertext, type_tag_for_handle_type(HandleType::Sbool))?;
         Some(payload_to_bool(payload))
     }
 
@@ -275,10 +281,7 @@ impl LocalEnclaveRuntime {
     }
 
     fn seal_output(&self, task: &ResolutionTask, plaintext: [u8; 32]) -> SystemCiphertextV1 {
-        let type_tag = match task.output_handle_type {
-            HandleType::Suint256 => SUINT256_TYPE_TAG,
-            HandleType::Sbool => SBOOL_TYPE_TAG,
-        };
+        let type_tag = type_tag_for_handle_type(task.output_handle_type);
         let aad = SystemHandleAadV1 {
             version: AAD_VERSION,
             chain_id: self.config.chain_id,
@@ -337,6 +340,13 @@ impl EnclaveRuntime for LocalEnclaveRuntime {
 
 fn input_aad_error(input_index: usize, field: InputAadField) -> EnclaveExecutionError {
     EnclaveExecutionError::InputAadVerificationFailed { input_index, field }
+}
+
+const fn type_tag_for_handle_type(handle_type: HandleType) -> &'static str {
+    match handle_type {
+        HandleType::Suint256 => SUINT256_TYPE_TAG,
+        HandleType::Sbool => SBOOL_TYPE_TAG,
+    }
 }
 
 struct SealedPayload {
@@ -432,16 +442,12 @@ impl SupportedOperation {
             | SupportedOperation::Lte
             | SupportedOperation::Gt
             | SupportedOperation::Gte => &[SUINT256_TYPE_TAG, SUINT256_TYPE_TAG],
-            SupportedOperation::And | SupportedOperation::Or => {
-                &[SBOOL_TYPE_TAG, SBOOL_TYPE_TAG]
-            }
+            SupportedOperation::And | SupportedOperation::Or => &[SBOOL_TYPE_TAG, SBOOL_TYPE_TAG],
             SupportedOperation::Not => &[SBOOL_TYPE_TAG],
             SupportedOperation::SelectSuint256 => {
                 &[SBOOL_TYPE_TAG, SUINT256_TYPE_TAG, SUINT256_TYPE_TAG]
             }
-            SupportedOperation::SelectSbool => {
-                &[SBOOL_TYPE_TAG, SBOOL_TYPE_TAG, SBOOL_TYPE_TAG]
-            }
+            SupportedOperation::SelectSbool => &[SBOOL_TYPE_TAG, SBOOL_TYPE_TAG, SBOOL_TYPE_TAG],
         }
     }
 
@@ -571,8 +577,8 @@ fn derive_keystream_32(secret: &[u8; 32], aad: &[u8]) -> [u8; 32] {
 }
 
 /// Symbolic wrapped-DEK bytes, deterministic per AAD. The Enclave does not
-/// use these for unsealing — the keystream is derived directly from the
-/// sealing secret and the AAD — but a real MPC-wrapped DEK is non-empty and
+/// use these for unsealing; the keystream is derived directly from the
+/// sealing secret and the AAD, but a real MPC-wrapped DEK is non-empty and
 /// AAD-bound, and we mirror that here so envelopes look structurally real.
 fn derive_wrapped_key(secret: &[u8; 32], aad: &[u8]) -> Vec<u8> {
     let mut state: u64 = 0;

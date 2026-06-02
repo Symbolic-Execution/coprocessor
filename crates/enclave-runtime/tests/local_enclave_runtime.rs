@@ -2,9 +2,9 @@
 //! for deterministic testing of the Coprocessor / Enclave boundary. Drives the
 //! same public `EnclaveRuntime` trait the host uses, so these tests exercise
 //! the contract end-to-end: a host scheduler hands the runtime a Resolution
-//! Task, the runtime verifies the per-input `EnclaveAadV1`, evaluates a narrow
-//! suint256 operation path, and returns a `SystemCiphertextV1` plus a
-//! Materialization Receipt.
+//! Task, the runtime verifies the per-input `EnclaveAadV1`, evaluates the
+//! initial private operation surface, and returns a `SystemCiphertextV1` plus
+//! a Materialization Receipt.
 //!
 //! Host-facing assertions in this file deliberately never inspect plaintext
 //! Private Values. The runtime exposes test-only sealing helpers that let test
@@ -118,7 +118,7 @@ fn evaluates_suint256_add_end_to_end_through_enclave_boundary() {
 fn host_only_receives_system_ciphertext_and_receipt_no_plaintext() {
     // Drive the runtime through a `&dyn EnclaveRuntime` trait object to model a
     // host scheduler that has no knowledge of which runtime it holds. Assert
-    // that the only outputs are the encrypted envelope and the receipt — no
+    // that the only outputs are the encrypted envelope and the receipt; no
     // type from the boundary exposes plaintext.
     let runtime = runtime();
     let (task, _expected_sum) = add_task(&runtime, 11, 31);
@@ -378,10 +378,7 @@ fn sbool_binop_task(
     }
 }
 
-fn run_and_unseal_suint256(
-    runtime: &LocalEnclaveRuntime,
-    task: &ResolutionTask,
-) -> [u8; 32] {
+fn run_and_unseal_suint256(runtime: &LocalEnclaveRuntime, task: &ResolutionTask) -> [u8; 32] {
     let outcome = runtime
         .execute(task)
         .expect("well-formed task must succeed");
@@ -546,7 +543,7 @@ fn evaluates_sbool_not_unary() {
 fn evaluates_select_for_suint256_branches_preserving_order() {
     // Select takes (predicate sbool, when_true, when_false) in that order. The
     // local Enclave evaluates both branches inside the boundary and only
-    // releases the chosen ciphertext through a SystemCiphertextV1 — host code
+    // releases the chosen ciphertext through a SystemCiphertextV1; host code
     // cannot tell which branch was selected from the encrypted envelope.
     let runtime = runtime();
     let req = request_id();
