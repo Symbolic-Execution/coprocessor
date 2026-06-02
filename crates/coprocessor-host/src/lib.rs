@@ -13,7 +13,9 @@
 
 use std::collections::BTreeSet;
 
-use coprocessor_handle_graph_core::{HandleGraphCore, HandleKey};
+use coprocessor_handle_graph_core::{
+    HandleGraphCore, HandleKey, HandlePersistence, PlaintextMaterializer,
+};
 
 mod internal_api;
 
@@ -147,9 +149,57 @@ impl CoprocessorHost {
 
     /// Construct a host in the [`LifecycleState::NotStarted`] phase.
     pub fn new(config: HostConfig) -> Self {
+        Self::from_handle_graph_core(config, HandleGraphCore::new())
+    }
+
+    /// Construct a host whose [`HandleGraphCore`] is restored from
+    /// `persistence`. The restored graph includes Handle Records, consumed
+    /// Chain Event refs, and tombstone state, so host reads, ingestion replay,
+    /// and Resolution Readiness observe the same graph state as before the
+    /// restart.
+    ///
+    /// The restored host returns in [`LifecycleState::NotStarted`]; callers
+    /// must still invoke [`Self::start`] before the host serves traffic, so
+    /// configuration validation and dependency wiring follow the same path as
+    /// a fresh boot.
+    ///
+    /// The restored Handle Graph uses [`PlaintextMaterializer::default`].
+    /// Callers that subsequently ingest Plaintext Handle events should prefer
+    /// [`Self::restore_from_persistence_with_materializer`] so post-restart
+    /// Plaintext Handle ingestion keeps producing real `SystemCiphertextV1`
+    /// envelopes bound to the host's active MPC key id.
+    pub fn restore_from_persistence<P: HandlePersistence>(
+        config: HostConfig,
+        persistence: &P,
+    ) -> Self {
+        Self::from_handle_graph_core(
+            config,
+            HandleGraphCore::restore_from_persistence(persistence),
+        )
+    }
+
+    /// Same as [`Self::restore_from_persistence`], but binds the supplied
+    /// `plaintext_materializer` so post-restart Plaintext Handle ingestion
+    /// keeps producing real `SystemCiphertextV1` envelopes bound to the host's
+    /// active MPC key id.
+    pub fn restore_from_persistence_with_materializer<P: HandlePersistence>(
+        config: HostConfig,
+        persistence: &P,
+        plaintext_materializer: PlaintextMaterializer,
+    ) -> Self {
+        Self::from_handle_graph_core(
+            config,
+            HandleGraphCore::restore_from_persistence_with_materializer(
+                persistence,
+                plaintext_materializer,
+            ),
+        )
+    }
+
+    fn from_handle_graph_core(config: HostConfig, handle_graph_core: HandleGraphCore) -> Self {
         Self {
             config,
-            handle_graph_core: HandleGraphCore::new(),
+            handle_graph_core,
             lifecycle: LifecycleState::NotStarted,
             available_dependencies: BTreeSet::new(),
             resolution_intents: ResolutionIntents::default(),
