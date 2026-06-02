@@ -12,6 +12,8 @@ use coprocessor_handle_graph_core::{
 };
 
 const ACTIVE_KEY_ID: [u8; 32] = [0xAB; 32];
+const AAD_VERSION: u8 = 1;
+const ENVELOPE_VERSION: u8 = 1;
 const DOMAIN_SEED: u8 = 9;
 const CONTRACT_SEED: u8 = 7;
 
@@ -30,8 +32,8 @@ fn materialized_suint256_plaintext_binds_system_handle_aad_v1() {
 
     let (envelope, aad) = decode_ready_envelope(&core, &handle_key);
 
-    assert_eq!(envelope.version, 1);
-    assert_eq!(aad.version, 1);
+    assert_eq!(envelope.version, ENVELOPE_VERSION);
+    assert_eq!(aad.version, AAD_VERSION);
     assert_eq!(aad.chain_id, 1);
     assert_eq!(aad.domain_id.0, bytes32(DOMAIN_SEED));
     assert_eq!(aad.handle_id.0, bytes32(42));
@@ -54,7 +56,7 @@ fn materialized_sbool_plaintext_binds_system_handle_aad_v1() {
 
     let (envelope, aad) = decode_ready_envelope(&core, &handle_key);
 
-    assert_eq!(envelope.version, 1);
+    assert_eq!(envelope.version, ENVELOPE_VERSION);
     assert_eq!(aad.type_tag, "sbool");
     assert_eq!(aad.chain_id, 1);
     assert_eq!(aad.domain_id.0, bytes32(DOMAIN_SEED));
@@ -130,7 +132,7 @@ fn materialized_handle_state_carries_non_empty_receipt() {
 }
 
 #[test]
-fn decoding_materialized_envelope_with_wrong_type_tag_is_rejected() {
+fn system_ciphertext_decode_rejects_non_system_handle_aad_kind() {
     let mut core = build_core();
     let handle_key = handle_key(1, 42);
     let event_ref = chain_event_ref(1, 10, 3);
@@ -145,15 +147,14 @@ fn decoding_materialized_envelope_with_wrong_type_tag_is_rejected() {
     let (_envelope, aad) = decode_ready_envelope(&core, &handle_key);
 
     // The AAD encodes "suint256". A consumer that expects "sbool" must
-    // detect the mismatch — the host does not silently accept misbound AAD.
+    // detect the mismatch.
     let expected_sbool_type_tag = "sbool";
     assert_ne!(aad.type_tag, expected_sbool_type_tag);
 
-    // And a wrong AAD kind must not silently bind to the SystemCiphertextV1
-    // envelope: build an AAD with a different kind and try to wrap it into a
-    // SystemCiphertextV1 — encoding round-trip surfaces the binding mismatch.
+    // A wrong AAD kind must not silently bind to a SystemCiphertextV1
+    // envelope.
     let wrong_aad = cbinding::EnclaveAadV1 {
-        version: 1,
+        version: AAD_VERSION,
         chain_id: aad.chain_id,
         domain_id: aad.domain_id,
         request_id: cbinding::RequestId([0; 32]),
@@ -163,7 +164,7 @@ fn decoding_materialized_envelope_with_wrong_type_tag_is_rejected() {
         key_id: aad.key_id,
     };
     let wrong_envelope = EnvelopeSystemCiphertextV1 {
-        version: 1,
+        version: ENVELOPE_VERSION,
         aad: wrong_aad.encode(),
         wrapped_key: Vec::new(),
         ciphertext: Vec::new(),

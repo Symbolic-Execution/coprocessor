@@ -61,9 +61,8 @@ impl PlaintextMaterializer {
     }
 
     /// Materialize one [`PlaintextHandle`] into the payload values the host
-    /// stores in [`crate::HandleState::Ready`]. The Public Plaintext Value
-    /// is read for type-tag selection and AAD assembly only; its raw bytes
-    /// do not appear in either output.
+    /// stores in [`crate::HandleState::Ready`]. The Public Plaintext Value's
+    /// raw bytes do not appear in either output.
     pub fn materialize(&self, plaintext: &PlaintextHandle) -> MaterializedPlaintextHandle {
         let aad = self.build_aad(plaintext);
         let aad_bytes = aad.encode();

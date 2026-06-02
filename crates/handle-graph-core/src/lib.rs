@@ -528,9 +528,6 @@ impl HandleGraphCore {
             return outcome;
         }
 
-        // The materialized envelope and receipt are derived from the AAD
-        // tuple and the active key id only; the Public Plaintext Value
-        // itself is read but never stored on the Handle Record.
         let MaterializedPlaintextHandle {
             system_ciphertext,
             materialization_receipt,
