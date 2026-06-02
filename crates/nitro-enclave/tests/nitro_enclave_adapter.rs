@@ -16,7 +16,7 @@ use coprocessor_nitro_enclave::{
 
 use common::{
     approved_config, fake_attestation_document_bytes, fake_enclave_public_key,
-    valid_attestation_doc, FakeNsm, TEST_APPROVED_MEASUREMENT, TEST_PUBLIC_KEY_LEN,
+    valid_attestation_doc, FakeNsm, UnreachableNsm, TEST_APPROVED_MEASUREMENT, TEST_PUBLIC_KEY_LEN,
 };
 
 fn adapter_with_doc(doc: NitroAttestationDoc) -> NitroEnclaveAdapter<FakeNsm> {
@@ -136,8 +136,8 @@ fn maps_nsm_malformed_to_malformed_attestation() {
     );
 }
 
-fn expect_invalid_configuration(
-    result: Result<NitroEnclaveAdapter<FakeNsm>, EnclaveAttestationError>,
+fn expect_invalid_configuration<S>(
+    result: Result<NitroEnclaveAdapter<S>, EnclaveAttestationError>,
 ) -> EnclaveAttestationError {
     match result {
         Ok(_) => panic!("expected EnclaveAttestationError::InvalidConfiguration"),
@@ -183,19 +183,12 @@ fn configuration_validation_rejects_all_zero_approved_measurement() {
 
 #[test]
 fn configuration_validation_runs_before_any_nsm_round_trip() {
-    // The adapter must not call the NSM when its configuration is invalid.
-    // We program the fake to a doc that would succeed if reached, but
-    // configuration validation should fail first; the test passes if the
-    // adapter never asks the fake (the fake's outcome remains unconsumed).
     let bad = NitroAdapterConfig {
         approved_enclave_measurement: AttestationDigest([0; 32]),
         expected_public_key_len: TEST_PUBLIC_KEY_LEN,
     };
-    let fake = FakeNsm::returning_doc(valid_attestation_doc());
 
-    let _ = expect_invalid_configuration(NitroEnclaveAdapter::new(bad, fake));
-    // Construction failed before the fake was consumed; the test reaching
-    // this point implies no NSM round trip happened.
+    let _ = expect_invalid_configuration(NitroEnclaveAdapter::new(bad, UnreachableNsm));
 }
 
 #[test]

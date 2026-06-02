@@ -91,3 +91,12 @@ impl NitroAttestationDocSource for FakeNsm {
         }
     }
 }
+
+/// Source for tests that must fail before reaching the NSM boundary.
+pub struct UnreachableNsm;
+
+impl NitroAttestationDocSource for UnreachableNsm {
+    fn fetch_attestation_doc(&self) -> Result<NitroAttestationDoc, NitroSourceError> {
+        panic!("NSM source should not be called")
+    }
+}

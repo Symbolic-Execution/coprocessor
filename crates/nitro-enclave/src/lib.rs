@@ -2,8 +2,8 @@
 //! Host, together with an AWS Nitro production-target adapter.
 //!
 //! The Coprocessor Host populates each
-//! [`ToEnclaveTransformationRequest`](https://docs.rs/) it sends MPC with three
-//! pieces of evidence about the Enclave the Resolution Task targets:
+//! `ToEnclaveTransformationRequest` it sends to MPC with three pieces of
+//! evidence about the Enclave the Resolution Task targets:
 //!
 //! - the Enclave public key MPC will wrap the input ciphertext to,
 //! - the Enclave Measurement MPC will check the attestation against, and
