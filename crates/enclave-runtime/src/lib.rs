@@ -41,6 +41,31 @@ pub struct ResolutionTask {
     pub input_ciphertexts: Vec<EnclaveCiphertextV1>,
 }
 
+impl ResolutionTask {
+    fn validate_input_count(&self) -> Result<(), EnclaveExecutionError> {
+        let handle_key_count = self.input_handle_keys.len();
+        let ciphertext_count = self.input_ciphertexts.len();
+
+        if handle_key_count == ciphertext_count {
+            Ok(())
+        } else {
+            Err(EnclaveExecutionError::InputCountMismatch {
+                handle_key_count,
+                ciphertext_count,
+            })
+        }
+    }
+
+    fn materialization_receipt(&self) -> EnclaveMaterializationReceipt {
+        EnclaveMaterializationReceipt {
+            operation_code: self.operation_code,
+            output_handle_key: self.output_handle_key,
+            input_handle_keys: self.input_handle_keys.clone(),
+            attestation_digest: self.attestation_digest,
+        }
+    }
+}
+
 /// Materialization Receipt for a Derived Handle that became Ready because
 /// Enclave Execution succeeded. It carries non-secret evidence the host can
 /// persist alongside the [`SystemCiphertextV1`] result: the OperationCode the
@@ -142,29 +167,11 @@ impl EnclaveRuntime for FakeEnclaveRuntime {
         &self,
         task: &ResolutionTask,
     ) -> Result<EnclaveExecutionOutcome, EnclaveExecutionError> {
-        if task.input_handle_keys.len() != task.input_ciphertexts.len() {
-            return Err(EnclaveExecutionError::InputCountMismatch {
-                handle_key_count: task.input_handle_keys.len(),
-                ciphertext_count: task.input_ciphertexts.len(),
-            });
-        }
-
-        if let Some(expected) = self.expected_attestation {
-            if expected != task.attestation_digest {
-                return Err(EnclaveExecutionError::AttestationVerificationFailure {
-                    expected,
-                    actual: task.attestation_digest,
-                });
-            }
-        }
+        task.validate_input_count()?;
+        self.verify_attestation(task.attestation_digest)?;
 
         let system_ciphertext = synth_system_ciphertext(task);
-        let receipt = EnclaveMaterializationReceipt {
-            operation_code: task.operation_code,
-            output_handle_key: task.output_handle_key,
-            input_handle_keys: task.input_handle_keys.clone(),
-            attestation_digest: task.attestation_digest,
-        };
+        let receipt = task.materialization_receipt();
         Ok(EnclaveExecutionOutcome {
             system_ciphertext,
             receipt,
@@ -172,21 +179,37 @@ impl EnclaveRuntime for FakeEnclaveRuntime {
     }
 }
 
+impl FakeEnclaveRuntime {
+    fn verify_attestation(&self, actual: AttestationDigest) -> Result<(), EnclaveExecutionError> {
+        match self.expected_attestation {
+            Some(expected) if expected != actual => {
+                Err(EnclaveExecutionError::AttestationVerificationFailure { expected, actual })
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+const FAKE_SYSTEM_CIPHERTEXT_VERSION: u8 = 1;
+const FAKE_AAD_PREFIX: &[u8] = b"fake-enclave-runtime/aad:";
+const FAKE_WRAPPED_KEY_PREFIX: &[u8] = b"fake-enclave-runtime/wrapped:";
+const FAKE_CIPHERTEXT_PREFIX: &[u8] = b"fake-enclave-runtime/result:";
+
 /// Build a fingerprint [`SystemCiphertextV1`] from a task. The bytes are
 /// deterministic and depend on the request id, output Handle Key,
-/// OperationCode, and every input ciphertext envelope, so different tasks
-/// produce different fingerprints. They are *not* a real encryption; they
-/// only let tests assert the boundary plumbing wires inputs through to the
-/// host-visible result without ever holding plaintext.
+/// OperationCode, and the AAD and ciphertext bytes of each input, so different
+/// tasks produce different fingerprints. They are *not* a real encryption;
+/// they only let tests assert the boundary plumbing wires inputs through to
+/// the host-visible result without ever holding plaintext.
 fn synth_system_ciphertext(task: &ResolutionTask) -> SystemCiphertextV1 {
-    let mut aad = b"fake-enclave-runtime/aad:".to_vec();
+    let mut aad = FAKE_AAD_PREFIX.to_vec();
     aad.extend_from_slice(&task.request_id.0);
     aad.extend_from_slice(&task.output_handle_key.handle_id.0);
 
-    let mut wrapped_key = b"fake-enclave-runtime/wrapped:".to_vec();
+    let mut wrapped_key = FAKE_WRAPPED_KEY_PREFIX.to_vec();
     wrapped_key.extend_from_slice(&task.attestation_digest.0);
 
-    let mut ciphertext = b"fake-enclave-runtime/result:".to_vec();
+    let mut ciphertext = FAKE_CIPHERTEXT_PREFIX.to_vec();
     ciphertext.push(op_code_byte(task.operation_code));
     for input in &task.input_ciphertexts {
         ciphertext.extend_from_slice(&input.aad);
@@ -195,7 +218,7 @@ fn synth_system_ciphertext(task: &ResolutionTask) -> SystemCiphertextV1 {
     ciphertext.extend_from_slice(&task.output_handle_key.handle_id.0);
 
     SystemCiphertextV1 {
-        version: 1,
+        version: FAKE_SYSTEM_CIPHERTEXT_VERSION,
         aad,
         wrapped_key,
         ciphertext,
