@@ -32,8 +32,8 @@ pub use resolution_intent::{RequestId, ResolutionIntent};
 
 mod resolution_scheduler;
 
-use resolution_scheduler::ResolutionTaskClaims;
 pub use resolution_scheduler::ResolutionTask;
+use resolution_scheduler::ResolutionTaskClaims;
 
 const ALL_DEPENDENCIES: [DependencyName; 3] = [
     DependencyName::SymVmEventSurface,

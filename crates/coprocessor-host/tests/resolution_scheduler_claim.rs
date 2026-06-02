@@ -36,8 +36,22 @@ fn claim_resolution_tasks_builds_one_task_per_ready_derived_handle() {
     let b = default_handle_key(2);
     let a_ciphertext = SystemCiphertextV1(vec![0xA1]);
     let b_ciphertext = SystemCiphertextV1(vec![0xB2]);
-    ingest_imported(&mut host, a, HandleType::Suint256, a_ciphertext.clone(), 1, 1);
-    ingest_imported(&mut host, b, HandleType::Suint256, b_ciphertext.clone(), 1, 2);
+    ingest_imported(
+        &mut host,
+        a,
+        HandleType::Suint256,
+        a_ciphertext.clone(),
+        1,
+        1,
+    );
+    ingest_imported(
+        &mut host,
+        b,
+        HandleType::Suint256,
+        b_ciphertext.clone(),
+        1,
+        2,
+    );
     let derived = default_handle_key(10);
     ingest_derived(
         &mut host,
@@ -51,7 +65,11 @@ fn claim_resolution_tasks_builds_one_task_per_ready_derived_handle() {
 
     let tasks = host.claim_resolution_tasks();
 
-    assert_eq!(tasks.len(), 1, "one Pending Derived Handle => one task, got {tasks:?}");
+    assert_eq!(
+        tasks.len(),
+        1,
+        "one Pending Derived Handle => one task, got {tasks:?}"
+    );
     let task = &tasks[0];
     assert_eq!(task.output_handle_key, derived);
     assert_eq!(task.operation_code, OperationCode::Add);
@@ -192,7 +210,11 @@ fn claim_resolution_tasks_preserves_select_input_order_with_ciphertexts() {
     );
     assert_eq!(
         task.input_system_ciphertexts,
-        vec![predicate_ciphertext, when_true_ciphertext, when_false_ciphertext],
+        vec![
+            predicate_ciphertext,
+            when_true_ciphertext,
+            when_false_ciphertext
+        ],
         "Select ciphertexts must match input handle key order"
     );
 }
@@ -263,7 +285,10 @@ fn release_resolution_task_allows_a_future_claim_to_pick_it_up_again() {
     assert!(host.is_resolution_task_claimed(&pending));
 
     let released = host.release_resolution_task(&pending);
-    assert!(released, "release must report the previously claimed handle");
+    assert!(
+        released,
+        "release must report the previously claimed handle"
+    );
     assert!(!host.is_resolution_task_claimed(&pending));
     assert_eq!(host.claimed_resolution_task_count(), 0);
 
@@ -286,19 +311,28 @@ fn release_unknown_handle_key_is_a_no_op() {
 }
 
 #[test]
-fn claim_resolution_tasks_skips_failed_and_unknown_handles() {
+fn claim_resolution_tasks_skips_failed_handles() {
     let mut host = running_host();
     let (a, _) = seed_suint_pair(&mut host);
-    // wrong arity ⇒ Failed
-    let failed_derived = default_handle_key(40);
+    let failed_wrong_arity = default_handle_key(40);
     ingest_derived(
         &mut host,
-        failed_derived,
+        failed_wrong_arity,
         OperationCode::Add,
         HandleType::Suint256,
         vec![a],
         2,
         1,
+    );
+    let failed_unknown_input = default_handle_key(41);
+    ingest_derived(
+        &mut host,
+        failed_unknown_input,
+        OperationCode::Add,
+        HandleType::Suint256,
+        vec![a, default_handle_key(99)],
+        2,
+        2,
     );
 
     let tasks = host.claim_resolution_tasks();
@@ -307,7 +341,8 @@ fn claim_resolution_tasks_skips_failed_and_unknown_handles() {
         tasks.is_empty(),
         "Failed handles must not be claimed, got {tasks:?}",
     );
-    assert!(!host.is_resolution_task_claimed(&failed_derived));
+    assert!(!host.is_resolution_task_claimed(&failed_wrong_arity));
+    assert!(!host.is_resolution_task_claimed(&failed_unknown_input));
     assert_eq!(host.claimed_resolution_task_count(), 0);
 }
 
@@ -338,10 +373,24 @@ fn seed_suint_pair(host: &mut CoprocessorHost) -> (HandleKey, HandleKey) {
     let a = default_handle_key(1);
     let b = default_handle_key(2);
     if host.handle_graph_core().canonical_handle(&a).is_none() {
-        ingest_imported(host, a, HandleType::Suint256, SystemCiphertextV1(vec![0xA1]), 1, 1);
+        ingest_imported(
+            host,
+            a,
+            HandleType::Suint256,
+            SystemCiphertextV1(vec![0xA1]),
+            1,
+            1,
+        );
     }
     if host.handle_graph_core().canonical_handle(&b).is_none() {
-        ingest_imported(host, b, HandleType::Suint256, SystemCiphertextV1(vec![0xB2]), 1, 2);
+        ingest_imported(
+            host,
+            b,
+            HandleType::Suint256,
+            SystemCiphertextV1(vec![0xB2]),
+            1,
+            2,
+        );
     }
     (a, b)
 }

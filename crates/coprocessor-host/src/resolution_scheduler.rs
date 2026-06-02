@@ -2,10 +2,10 @@
 //!
 //! The scheduler observes [`ResolutionReadiness`] from the Handle Graph Core
 //! and turns each entry into a [`ResolutionTask`] that the host can hand off
-//! to MPC and the Enclave in later slices. A claim is the durable "I have
-//! taken responsibility for this Handle Key" flag: it deduplicates work for
-//! the same Pending Derived Handle so duplicate scheduler ticks and concurrent
-//! Resolve Handle Requests never produce two competing Resolution Tasks.
+//! to MPC and the Enclave in later slices. A claim records active responsibility
+//! for one Handle Key: it deduplicates work for the same Pending Derived Handle
+//! so duplicate scheduler ticks and concurrent Resolve Handle Requests never
+//! produce two competing Resolution Tasks.
 //!
 //! The claim does not touch Handle State: the underlying Derived Handle stays
 //! Pending while the task is in flight, and a future slice will mark it Ready
@@ -63,7 +63,7 @@ impl ResolutionTask {
 /// while claims record that the scheduler has dispatched work for it.
 #[derive(Default)]
 pub(crate) struct ResolutionTaskClaims {
-    claimed: HashSet<HandleKey>,
+    claimed_handle_keys: HashSet<HandleKey>,
 }
 
 impl ResolutionTaskClaims {
@@ -75,7 +75,7 @@ impl ResolutionTaskClaims {
     pub(crate) fn claim_from_readiness(&mut self, core: &HandleGraphCore) -> Vec<ResolutionTask> {
         let mut tasks = Vec::new();
         for entry in core.resolution_readiness() {
-            if self.claimed.insert(entry.handle_key) {
+            if self.claimed_handle_keys.insert(entry.handle_key) {
                 tasks.push(ResolutionTask::from_readiness(entry));
             }
         }
@@ -83,14 +83,14 @@ impl ResolutionTaskClaims {
     }
 
     pub(crate) fn is_claimed(&self, handle_key: &HandleKey) -> bool {
-        self.claimed.contains(handle_key)
+        self.claimed_handle_keys.contains(handle_key)
     }
 
     pub(crate) fn release(&mut self, handle_key: &HandleKey) -> bool {
-        self.claimed.remove(handle_key)
+        self.claimed_handle_keys.remove(handle_key)
     }
 
     pub(crate) fn count(&self) -> usize {
-        self.claimed.len()
+        self.claimed_handle_keys.len()
     }
 }
