@@ -4,5 +4,6 @@ members = [
     "crates/ciphertext-binding",
     "crates/transport-json",
     "crates/enclave-runtime",
+    "crates/mpc-config",
 ]
 resolver = "2"

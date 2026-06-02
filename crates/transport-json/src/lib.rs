@@ -27,8 +27,11 @@ mod base64_codec;
 mod hex_codec;
 mod json_codec;
 
-pub use hex_codec::HexDecodeError;
-pub use json_codec::JsonParseError;
+pub use hex_codec::{
+    decode_lower as decode_hex_lower, decode_lower_variable as decode_hex_lower_variable,
+    HexDecodeError,
+};
+pub use json_codec::{parse_object, JsonObject, JsonParseError};
 
 // ---------------------------------------------------------------------------
 // Hex round-trip for fixed-byte identifiers

@@ -19,6 +19,15 @@ name = "coprocessor-handle-graph-core"
 version = "0.1.0"
 
 [[package]]
+name = "coprocessor-mpc-config"
+version = "0.1.0"
+dependencies = [
+ "coprocessor-ciphertext-binding",
+ "coprocessor-handle-graph-core",
+ "coprocessor-transport-json",
+]
+
+[[package]]
 name = "coprocessor-transport-json"
 version = "0.1.0"
 dependencies = [
