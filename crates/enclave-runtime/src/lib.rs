@@ -20,9 +20,13 @@
 //! ciphertext envelopes and receipt metadata only.
 
 pub use coprocessor_ciphertext_binding::{
-    AttestationDigest, EnclaveCiphertextV1, RequestId, SystemCiphertextV1,
+    AttestationDigest, DomainId, EnclaveCiphertextV1, KeyId, RequestId, SystemCiphertextV1,
 };
 pub use coprocessor_handle_graph_core::{HandleKey, HandleType, OperationCode};
+
+mod local;
+
+pub use local::{InputAadField, LocalEnclaveConfig, LocalEnclaveRuntime};
 
 /// One host-scheduled Resolution Task: everything an [`EnclaveRuntime`] needs
 /// to perform Enclave Execution for a single Derived Handle.
@@ -113,6 +117,17 @@ pub enum EnclaveExecutionError {
     /// The runtime does not implement this OperationCode. The host treats
     /// this as a permanent failure for the affected Derived Handle.
     OperationNotSupported(OperationCode),
+    /// One input ciphertext's [`EnclaveAadV1`] did not match the binding the
+    /// runtime expected for this Resolution Task. The error names the failing
+    /// input position and the specific AAD field that disagreed, without
+    /// exposing AAD bytes or key material. Hosts treat this as a permanent
+    /// failure for the affected Derived Handle.
+    ///
+    /// [`EnclaveAadV1`]: coprocessor_ciphertext_binding::EnclaveAadV1
+    InputAadVerificationFailed {
+        input_index: usize,
+        field: InputAadField,
+    },
     /// A transient backend condition (queue full, attestation refresh in
     /// progress, etc.). Hosts may retry while their retry policy still allows
     /// it; the Handle remains Pending in that window.
