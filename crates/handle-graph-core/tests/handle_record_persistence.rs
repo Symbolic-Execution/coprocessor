@@ -1,10 +1,11 @@
 //! Persistence semantics for Handle Records and consumed Chain Events,
 //! exercised through the domain-facing HandlePersistence interface.
 //!
-//! These tests cover the acceptance criteria of issue #32: canonical Pending,
-//! Ready, and Failed Handle Records persist with their state-specific
+//! These tests cover the acceptance criteria of issues #32 and #33: canonical
+//! Pending, Ready, and Failed Handle Records persist with their state-specific
 //! payloads; consumed ChainEventRefs persist so ingestion replay remains
-//! idempotent across restarts; Ready persists SystemCiphertextV1 and
+//! idempotent across restarts; tombstoned records remain hidden from canonical
+//! reads and visible to audit reads; Ready persists SystemCiphertextV1 and
 //! Materialization Receipt (not plaintext Private Values); and the
 //! domain-facing persistence interface is the test surface used here.
 
@@ -295,6 +296,157 @@ fn tombstone_persists_and_canonical_reads_remain_hidden_after_restart() {
 }
 
 #[test]
+fn cascade_tombstone_persists_and_remains_hidden_from_canonical_reads_after_restart() {
+    let mut core = HandleGraphCore::new();
+    let mut store = InMemoryHandlePersistence::new();
+    let a = handle_key(1, 7, 100);
+    let b = handle_key(1, 7, 101);
+    let a_event_ref = chain_event_ref(1, 1, 1);
+    let derived = handle_key(1, 7, 102);
+
+    record_imported_suint(
+        &mut core,
+        &mut store,
+        a,
+        a_event_ref,
+        SystemCiphertextV1(vec![1]),
+        MaterializationReceipt(vec![2]),
+    );
+    record_imported_suint(
+        &mut core,
+        &mut store,
+        b,
+        chain_event_ref(1, 1, 2),
+        SystemCiphertextV1(vec![3]),
+        MaterializationReceipt(vec![4]),
+    );
+    record_pending_add(
+        &mut core,
+        &mut store,
+        derived,
+        vec![a, b],
+        chain_event_ref(1, 2, 1),
+    );
+
+    let outcome = core.apply_orphan_discard_with_persistence(&[a_event_ref], &mut store);
+    assert_eq!(outcome.directly_tombstoned, vec![a]);
+    assert_eq!(
+        outcome.cascade_tombstoned,
+        vec![derived],
+        "precondition: orphan discard must cascade through derived handle"
+    );
+
+    drop(core);
+    let restored = HandleGraphCore::restore_from_persistence(&store);
+
+    assert!(
+        restored.canonical_handle(&a).is_none(),
+        "directly-tombstoned source must remain hidden from canonical reads after restart"
+    );
+    assert!(
+        restored.canonical_handle(&derived).is_none(),
+        "cascade-tombstoned derived must remain hidden from canonical reads after restart"
+    );
+    let audit_a = restored
+        .handle_record_for_audit(&a)
+        .expect("directly-tombstoned source retained for audit after restart");
+    assert!(audit_a.is_tombstoned);
+    let audit_derived = restored
+        .handle_record_for_audit(&derived)
+        .expect("cascade-tombstoned derived retained for audit after restart");
+    assert!(
+        audit_derived.is_tombstoned,
+        "cascade tombstone flag must be persisted"
+    );
+}
+
+#[test]
+fn tombstoned_record_audit_preserves_chain_event_ref_lineage_and_state_after_restart() {
+    let mut core = HandleGraphCore::new();
+    let mut store = InMemoryHandlePersistence::new();
+    let a = handle_key(1, 7, 110);
+    let b = handle_key(1, 7, 111);
+    let a_event_ref = chain_event_ref(1, 1, 1);
+    let imported_ciphertext = SystemCiphertextV1(vec![0xAA, 0xBB]);
+    let imported_receipt = MaterializationReceipt(vec![0xCC, 0xDD]);
+    let derived = handle_key(1, 7, 112);
+    let derived_event_ref = chain_event_ref(1, 2, 1);
+
+    record_imported_suint(
+        &mut core,
+        &mut store,
+        a,
+        a_event_ref,
+        imported_ciphertext.clone(),
+        imported_receipt.clone(),
+    );
+    record_imported_suint(
+        &mut core,
+        &mut store,
+        b,
+        chain_event_ref(1, 1, 2),
+        SystemCiphertextV1(vec![3]),
+        MaterializationReceipt(vec![4]),
+    );
+    record_pending_add(
+        &mut core,
+        &mut store,
+        derived,
+        vec![a, b],
+        derived_event_ref,
+    );
+
+    let _ = core.apply_orphan_discard_with_persistence(&[a_event_ref], &mut store);
+
+    drop(core);
+    let restored = HandleGraphCore::restore_from_persistence(&store);
+
+    let audit_a = restored
+        .handle_record_for_audit(&a)
+        .expect("audit must expose directly-tombstoned source after restart");
+    assert_eq!(
+        audit_a.event_ref, a_event_ref,
+        "audit must preserve original ChainEventRef after restart"
+    );
+    assert_eq!(
+        audit_a.lineage,
+        HandleLineage::Source,
+        "audit must preserve original lineage after restart"
+    );
+    assert_eq!(
+        audit_a.state,
+        HandleState::Ready {
+            system_ciphertext: imported_ciphertext,
+            materialization_receipt: imported_receipt,
+        },
+        "audit must preserve original Handle State after restart"
+    );
+    assert!(audit_a.is_tombstoned);
+
+    let audit_derived = restored
+        .handle_record_for_audit(&derived)
+        .expect("audit must expose cascade-tombstoned derived after restart");
+    assert_eq!(
+        audit_derived.event_ref, derived_event_ref,
+        "audit must preserve derived's original ChainEventRef after restart"
+    );
+    assert_eq!(
+        audit_derived.lineage,
+        HandleLineage::Derived {
+            operation_code: OperationCode::Add,
+            input_handle_keys: vec![a, b],
+        },
+        "audit must preserve derived lineage after restart"
+    );
+    assert_eq!(
+        audit_derived.state,
+        HandleState::Pending,
+        "audit must preserve derived's original Handle State after restart"
+    );
+    assert!(audit_derived.is_tombstoned);
+}
+
+#[test]
 fn duplicate_rejected_record_is_not_persisted_but_event_is_marked_consumed() {
     let mut core = HandleGraphCore::new();
     let mut store = InMemoryHandlePersistence::new();
@@ -381,27 +533,62 @@ fn seed_imported_suint_pair(
 ) -> (HandleKey, HandleKey) {
     let a = handle_key(1, 7, a_seed);
     let b = handle_key(1, 7, b_seed);
-    let _ = expect_recorded(core.apply_chain_event_with_persistence(
-        imported_event(
-            a,
-            HandleType::Suint256,
-            chain_event_ref(1, 1, a_seed as u32),
-            SystemCiphertextV1(vec![1]),
-            MaterializationReceipt(vec![2]),
-        ),
+    record_imported_suint(
+        core,
         store,
-    ));
-    let _ = expect_recorded(core.apply_chain_event_with_persistence(
-        imported_event(
-            b,
-            HandleType::Suint256,
-            chain_event_ref(1, 1, b_seed as u32),
-            SystemCiphertextV1(vec![3]),
-            MaterializationReceipt(vec![4]),
-        ),
+        a,
+        chain_event_ref(1, 1, a_seed as u32),
+        SystemCiphertextV1(vec![1]),
+        MaterializationReceipt(vec![2]),
+    );
+    record_imported_suint(
+        core,
         store,
-    ));
+        b,
+        chain_event_ref(1, 1, b_seed as u32),
+        SystemCiphertextV1(vec![3]),
+        MaterializationReceipt(vec![4]),
+    );
     (a, b)
+}
+
+fn record_imported_suint(
+    core: &mut HandleGraphCore,
+    store: &mut InMemoryHandlePersistence,
+    handle_key: HandleKey,
+    event_ref: ChainEventRef,
+    system_ciphertext: SystemCiphertextV1,
+    materialization_receipt: MaterializationReceipt,
+) {
+    let _ = expect_recorded(core.apply_chain_event_with_persistence(
+        imported_event(
+            handle_key,
+            HandleType::Suint256,
+            event_ref,
+            system_ciphertext,
+            materialization_receipt,
+        ),
+        store,
+    ));
+}
+
+fn record_pending_add(
+    core: &mut HandleGraphCore,
+    store: &mut InMemoryHandlePersistence,
+    handle_key: HandleKey,
+    input_handle_keys: Vec<HandleKey>,
+    event_ref: ChainEventRef,
+) {
+    let _ = expect_recorded(core.apply_chain_event_with_persistence(
+        derived_event(
+            handle_key,
+            OperationCode::Add,
+            HandleType::Suint256,
+            input_handle_keys,
+            event_ref,
+        ),
+        store,
+    ));
 }
 
 fn expect_recorded(outcome: IngestionOutcome) -> HandleRecord {
