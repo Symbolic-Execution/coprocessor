@@ -22,6 +22,11 @@ use common::{
     TEST_ATTESTATION_DIGEST, TEST_CHAIN_ID, TEST_HANDLE_ID, TEST_REQUEST_ID,
 };
 
+fn error_for_outcome(outcome: FakeMpcOutcome) -> ToEnclaveTransformationError {
+    let server = FakeMpcServer::returning(outcome);
+    request_to_enclave_transformation(&server, &valid_request()).unwrap_err()
+}
+
 #[test]
 fn success_response_returns_enclave_ciphertext_to_caller() {
     let envelope = enclave_ciphertext_for_test_request();
@@ -46,72 +51,58 @@ fn client_forwards_spec_fields_to_mpc_server() {
     assert_eq!(observed.enclave_public_key, enclave_public_key());
     assert_eq!(observed.enclave_measurement, TEST_ATTESTATION_DIGEST);
     assert_eq!(observed.attestation, attestation_bytes());
-    assert_eq!(observed.system_ciphertext, system_ciphertext_for_test_request());
+    assert_eq!(
+        observed.system_ciphertext,
+        system_ciphertext_for_test_request()
+    );
 }
 
 #[test]
 fn unauthorized_response_maps_to_unauthorized_error() {
-    let server = FakeMpcServer::returning(FakeMpcOutcome::Response(
-        MpcToEnclaveResponse::Unauthorized,
-    ));
+    let err = error_for_outcome(FakeMpcOutcome::Response(MpcToEnclaveResponse::Unauthorized));
 
-    let err = request_to_enclave_transformation(&server, &valid_request()).unwrap_err();
-
-    assert!(matches!(err, ToEnclaveTransformationError::Unauthorized));
+    assert_eq!(err, ToEnclaveTransformationError::Unauthorized);
 }
 
 #[test]
 fn invalid_binding_response_maps_to_invalid_binding_error() {
-    let server = FakeMpcServer::returning(FakeMpcOutcome::Response(
+    let err = error_for_outcome(FakeMpcOutcome::Response(
         MpcToEnclaveResponse::InvalidBinding,
     ));
 
-    let err = request_to_enclave_transformation(&server, &valid_request()).unwrap_err();
-
-    assert!(matches!(err, ToEnclaveTransformationError::InvalidBinding));
+    assert_eq!(err, ToEnclaveTransformationError::InvalidBinding);
 }
 
 #[test]
 fn invalid_attestation_response_maps_to_invalid_attestation_error() {
-    let server = FakeMpcServer::returning(FakeMpcOutcome::Response(
+    let err = error_for_outcome(FakeMpcOutcome::Response(
         MpcToEnclaveResponse::InvalidAttestation,
     ));
 
-    let err = request_to_enclave_transformation(&server, &valid_request()).unwrap_err();
-
-    assert!(matches!(
-        err,
-        ToEnclaveTransformationError::InvalidAttestation
-    ));
+    assert_eq!(err, ToEnclaveTransformationError::InvalidAttestation);
 }
 
 #[test]
-fn malformed_source_response_maps_to_malformed_response_error() {
-    let server =
-        FakeMpcServer::returning(FakeMpcOutcome::Source(MpcSourceError::MalformedResponse));
-
-    let err = request_to_enclave_transformation(&server, &valid_request()).unwrap_err();
-
-    assert!(matches!(
-        err,
-        ToEnclaveTransformationError::MalformedResponse
+fn malformed_source_error_maps_to_malformed_response_error() {
+    let err = error_for_outcome(FakeMpcOutcome::SourceError(
+        MpcSourceError::MalformedResponse,
     ));
+
+    assert_eq!(err, ToEnclaveTransformationError::MalformedResponse);
 }
 
 #[test]
 fn transport_unavailable_maps_to_unavailable_error_with_detail() {
-    let server = FakeMpcServer::returning(FakeMpcOutcome::Source(MpcSourceError::Unavailable {
+    let err = error_for_outcome(FakeMpcOutcome::SourceError(MpcSourceError::Unavailable {
         detail: "mpc endpoint timed out".to_string(),
     }));
 
-    let err = request_to_enclave_transformation(&server, &valid_request()).unwrap_err();
-
-    match err {
-        ToEnclaveTransformationError::Unavailable { detail } => {
-            assert_eq!(detail, "mpc endpoint timed out");
+    assert_eq!(
+        err,
+        ToEnclaveTransformationError::Unavailable {
+            detail: "mpc endpoint timed out".to_string(),
         }
-        other => panic!("expected Unavailable, got {:?}", other),
-    }
+    );
 }
 
 #[test]
@@ -120,20 +111,18 @@ fn five_failure_modes_each_have_a_distinct_error_variant() {
     // attestation, and backend-availability errors map to stable, distinct
     // Coprocessor errors. This test pins that all five reach distinct
     // variants so a future refactor that collapses any of them breaks here.
-    let make_err = |outcome: FakeMpcOutcome| {
-        let server = FakeMpcServer::returning(outcome);
-        request_to_enclave_transformation(&server, &valid_request()).unwrap_err()
-    };
-
-    let malformed = make_err(FakeMpcOutcome::Source(MpcSourceError::MalformedResponse));
-    let unauthorized = make_err(FakeMpcOutcome::Response(MpcToEnclaveResponse::Unauthorized));
-    let invalid_binding = make_err(FakeMpcOutcome::Response(
+    let malformed = error_for_outcome(FakeMpcOutcome::SourceError(
+        MpcSourceError::MalformedResponse,
+    ));
+    let unauthorized =
+        error_for_outcome(FakeMpcOutcome::Response(MpcToEnclaveResponse::Unauthorized));
+    let invalid_binding = error_for_outcome(FakeMpcOutcome::Response(
         MpcToEnclaveResponse::InvalidBinding,
     ));
-    let invalid_attestation = make_err(FakeMpcOutcome::Response(
+    let invalid_attestation = error_for_outcome(FakeMpcOutcome::Response(
         MpcToEnclaveResponse::InvalidAttestation,
     ));
-    let unavailable = make_err(FakeMpcOutcome::Source(MpcSourceError::Unavailable {
+    let unavailable = error_for_outcome(FakeMpcOutcome::SourceError(MpcSourceError::Unavailable {
         detail: "boom".to_string(),
     }));
 
@@ -181,8 +170,7 @@ fn errors_do_not_carry_key_material_or_ciphertext_bytes() {
     let attestation_signature = format!("{:?}", attestation_bytes());
     let system_ciphertext_signature =
         format!("{:?}", system_ciphertext_for_test_request().ciphertext);
-    let wrapped_key_signature =
-        format!("{:?}", system_ciphertext_for_test_request().wrapped_key);
+    let wrapped_key_signature = format!("{:?}", system_ciphertext_for_test_request().wrapped_key);
 
     for error in probes {
         let rendered = format!("{:?}", error);

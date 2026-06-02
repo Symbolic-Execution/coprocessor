@@ -23,7 +23,7 @@ pub fn enclave_public_key() -> Vec<u8> {
     vec![0x44; 48]
 }
 
-/// Opaque attestation evidence bytes. Tests treat this as a sealed payload —
+/// Opaque attestation evidence bytes. Tests treat this as a sealed payload -
 /// the client is expected to forward but never inspect.
 pub fn attestation_bytes() -> Vec<u8> {
     vec![0x55; 96]
@@ -87,7 +87,7 @@ pub fn valid_request() -> ToEnclaveTransformationRequest {
 /// typed protocol response or a transport-level source error.
 pub enum FakeMpcOutcome {
     Response(MpcToEnclaveResponse),
-    Source(MpcSourceError),
+    SourceError(MpcSourceError),
 }
 
 /// Fake MPC server. Tests seed it with one programmed outcome and assert
@@ -134,7 +134,7 @@ impl MpcToEnclaveSource for FakeMpcServer {
             .expect("FakeMpcServer outcome already consumed")
         {
             FakeMpcOutcome::Response(response) => Ok(response),
-            FakeMpcOutcome::Source(error) => Err(error),
+            FakeMpcOutcome::SourceError(error) => Err(error),
         }
     }
 }

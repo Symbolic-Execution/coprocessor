@@ -4,11 +4,11 @@
 //! [`SystemCiphertextV1`] into an [`EnclaveCiphertextV1`] bound to an attested
 //! Enclave key. This crate owns three concerns:
 //!
-//! 1. The [`ToEnclaveTransformationRequest`] value object — the spec fields
+//! 1. The [`ToEnclaveTransformationRequest`] value object - the spec fields
 //!    the host must forward to MPC (request id, chain id, handle id, enclave
 //!    public key and approved measurement, attestation evidence, and the
 //!    input [`SystemCiphertextV1`]).
-//! 2. The [`MpcToEnclaveSource`] seam — an indirection point so tests use a
+//! 2. The [`MpcToEnclaveSource`] seam - an indirection point so tests use a
 //!    fake MPC server and a later slice can wire an HTTP-backed
 //!    implementation when the host runtime is chosen.
 //! 3. Mapping wire-level outcomes to a stable
@@ -48,8 +48,8 @@ pub struct ToEnclaveTransformationRequest {
 /// Protocol-level response from an MPC backend.
 ///
 /// The seam exists at this level (not at raw bytes) so a backend
-/// implementation can translate its wire shape — HTTP status, gRPC status,
-/// or fake — into the same four-variant contract before reaching the
+/// implementation can translate its wire shape - HTTP status, gRPC status,
+/// or fake - into the same four-variant contract before reaching the
 /// client. The [`Success`](MpcToEnclaveResponse::Success) variant carries
 /// the typed [`EnclaveCiphertextV1`] so the client never has to re-parse
 /// envelope bytes itself.
@@ -128,20 +128,31 @@ pub fn request_to_enclave_transformation(
     source: &dyn MpcToEnclaveSource,
     request: &ToEnclaveTransformationRequest,
 ) -> Result<EnclaveCiphertextV1, ToEnclaveTransformationError> {
-    match source.request_to_enclave_transformation(request) {
-        Ok(MpcToEnclaveResponse::Success(envelope)) => Ok(envelope),
-        Ok(MpcToEnclaveResponse::Unauthorized) => Err(ToEnclaveTransformationError::Unauthorized),
-        Ok(MpcToEnclaveResponse::InvalidBinding) => {
-            Err(ToEnclaveTransformationError::InvalidBinding)
-        }
-        Ok(MpcToEnclaveResponse::InvalidAttestation) => {
+    let response = source
+        .request_to_enclave_transformation(request)
+        .map_err(map_source_error)?;
+
+    map_response(response)
+}
+
+fn map_response(
+    response: MpcToEnclaveResponse,
+) -> Result<EnclaveCiphertextV1, ToEnclaveTransformationError> {
+    match response {
+        MpcToEnclaveResponse::Success(envelope) => Ok(envelope),
+        MpcToEnclaveResponse::Unauthorized => Err(ToEnclaveTransformationError::Unauthorized),
+        MpcToEnclaveResponse::InvalidBinding => Err(ToEnclaveTransformationError::InvalidBinding),
+        MpcToEnclaveResponse::InvalidAttestation => {
             Err(ToEnclaveTransformationError::InvalidAttestation)
         }
-        Err(MpcSourceError::Unavailable { detail }) => {
-            Err(ToEnclaveTransformationError::Unavailable { detail })
+    }
+}
+
+fn map_source_error(error: MpcSourceError) -> ToEnclaveTransformationError {
+    match error {
+        MpcSourceError::Unavailable { detail } => {
+            ToEnclaveTransformationError::Unavailable { detail }
         }
-        Err(MpcSourceError::MalformedResponse) => {
-            Err(ToEnclaveTransformationError::MalformedResponse)
-        }
+        MpcSourceError::MalformedResponse => ToEnclaveTransformationError::MalformedResponse,
     }
 }
