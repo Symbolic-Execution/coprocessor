@@ -24,13 +24,12 @@ pub fn matching_expectations() -> MpcConfigExpectations {
 /// Wire-shaped JSON payload that matches [`matching_expectations`]. The
 /// public key is a 48-byte sequence so it satisfies BLS12-381 G1's shape.
 pub fn valid_config_json() -> String {
-    let public_key_hex = "0x".to_string() + &"44".repeat(48);
     build_json(&[
         ("chain_id", JsonValue::Uint(1)),
         ("domain_id", JsonValue::Str(&hex32(0x11))),
         ("active_key_id", JsonValue::Str(&hex32(0x22))),
         ("suite", JsonValue::Str("bls12-381-g1")),
-        ("public_key", JsonValue::Str(&public_key_hex)),
+        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ])
 }
@@ -63,8 +62,12 @@ pub fn build_json(fields: &[(&str, JsonValue<'_>)]) -> String {
 }
 
 pub fn hex32(byte: u8) -> String {
+    hex_bytes(byte, 32)
+}
+
+pub fn hex_bytes(byte: u8, len: usize) -> String {
     let mut out = String::from("0x");
-    for _ in 0..32 {
+    for _ in 0..len {
         out.push_str(&format!("{:02x}", byte));
     }
     out

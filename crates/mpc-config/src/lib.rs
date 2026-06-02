@@ -28,7 +28,7 @@ pub use coprocessor_ciphertext_binding::{AttestationDigest, DomainId, KeyId};
 pub use coprocessor_handle_graph_core::ChainId;
 pub use coprocessor_transport_json::{HexDecodeError, JsonParseError};
 
-use coprocessor_transport_json::{decode_hex_lower, parse_object};
+use coprocessor_transport_json::{decode_hex_lower, decode_hex_lower_variable, parse_object};
 
 const DOMAIN_ID_LEN: usize = 32;
 const KEY_ID_LEN: usize = 32;
@@ -74,9 +74,9 @@ impl MpcSuite {
 ///
 /// Each field corresponds to one spec-defined identity the Coprocessor must
 /// preserve when calling MPC or checking Enclave Measurement. The
-/// `public_key` byte length always matches [`MpcSuite::public_key_len`] for
-/// the value carried in `suite`; construction through
-/// [`parse_mpc_public_config`] enforces that invariant.
+/// `public_key` is parsed as lower-hex bytes; callers that need a trusted
+/// configuration should construct it through [`load_mpc_public_config`], which
+/// checks the public-key length against [`MpcSuite::public_key_len`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MpcPublicConfig {
     pub chain_id: ChainId,
@@ -176,8 +176,7 @@ pub enum MpcConfigParseError {
     /// The `suite` field carried a value that does not name a known
     /// [`MpcSuite`].
     UnknownSuite,
-    /// The `public_key` field's hex was well-formed but its byte length
-    /// could not be parsed (odd hex length, missing prefix, etc.).
+    /// The `public_key` field was not canonical lower `0x`-prefixed hex.
     InvalidPublicKey(HexDecodeError),
 }
 
@@ -279,7 +278,7 @@ pub fn parse_mpc_public_config(text: &str) -> Result<MpcPublicConfig, MpcConfigP
     )?;
 
     let suite = MpcSuite::from_wire_name(&suite_text).ok_or(MpcConfigParseError::UnknownSuite)?;
-    let public_key = decode_hex_var_length(&public_key_hex, "public_key")
+    let public_key = decode_hex_lower_variable(&public_key_hex, "public_key")
         .map_err(MpcConfigParseError::InvalidPublicKey)?;
 
     Ok(MpcPublicConfig {
@@ -304,33 +303,4 @@ fn to_fixed<const N: usize>(bytes: Vec<u8>) -> [u8; N] {
     let mut out = [0u8; N];
     out.copy_from_slice(&bytes);
     out
-}
-
-fn decode_hex_var_length(text: &str, field: &'static str) -> Result<Vec<u8>, HexDecodeError> {
-    const PREFIX: &str = "0x";
-    let payload = text
-        .strip_prefix(PREFIX)
-        .ok_or(HexDecodeError::MissingPrefix { field })?;
-    if payload.len() % 2 != 0 {
-        return Err(HexDecodeError::OddLength {
-            field,
-            actual_chars: payload.len(),
-        });
-    }
-    let mut bytes = Vec::with_capacity(payload.len() / 2);
-    for pair in payload.as_bytes().chunks_exact(2) {
-        let hi = nibble_value(field, pair[0])?;
-        let lo = nibble_value(field, pair[1])?;
-        bytes.push((hi << 4) | lo);
-    }
-    Ok(bytes)
-}
-
-fn nibble_value(field: &'static str, byte: u8) -> Result<u8, HexDecodeError> {
-    match byte {
-        b'0'..=b'9' => Ok(byte - b'0'),
-        b'a'..=b'f' => Ok(byte - b'a' + 10),
-        b'A'..=b'F' => Err(HexDecodeError::UppercaseDigit { field }),
-        _ => Err(HexDecodeError::InvalidDigit { field }),
-    }
 }

@@ -44,6 +44,21 @@ pub fn decode_lower(
     field: &'static str,
     expected_bytes: usize,
 ) -> Result<Vec<u8>, HexDecodeError> {
+    let bytes = decode_lower_variable(text, field)?;
+    if bytes.len() != expected_bytes {
+        return Err(HexDecodeError::WrongByteLength {
+            field,
+            expected: expected_bytes,
+            actual: bytes.len(),
+        });
+    }
+    Ok(bytes)
+}
+
+/// Decode canonical lowercase `0x`-prefixed hex without enforcing a byte
+/// length. Callers that own a variable-length field should validate shape
+/// after decoding.
+pub fn decode_lower_variable(text: &str, field: &'static str) -> Result<Vec<u8>, HexDecodeError> {
     let payload = text
         .strip_prefix(PREFIX)
         .ok_or(HexDecodeError::MissingPrefix { field })?;
@@ -58,13 +73,6 @@ pub fn decode_lower(
         let hi = nibble_value(field, pair[0])?;
         let lo = nibble_value(field, pair[1])?;
         bytes.push((hi << 4) | lo);
-    }
-    if bytes.len() != expected_bytes {
-        return Err(HexDecodeError::WrongByteLength {
-            field,
-            expected: expected_bytes,
-            actual: bytes.len(),
-        });
     }
     Ok(bytes)
 }

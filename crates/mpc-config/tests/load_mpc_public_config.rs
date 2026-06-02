@@ -15,8 +15,8 @@ use coprocessor_mpc_config::{
 };
 
 use common::{
-    build_json, hex32, matching_expectations, valid_config_json, FlakyOnceSource, JsonValue,
-    StubSource, UnavailableSource, TEST_ENCLAVE_MEASUREMENT, TEST_KEY_ID,
+    build_json, hex32, hex_bytes, matching_expectations, valid_config_json, FlakyOnceSource,
+    JsonValue, StubSource, UnavailableSource, TEST_ENCLAVE_MEASUREMENT, TEST_KEY_ID,
 };
 
 #[test]
@@ -47,10 +47,7 @@ fn chain_id_mismatch_surfaces_incompatible_load_error() {
         ("domain_id", JsonValue::Str(&hex32(0x11))),
         ("active_key_id", JsonValue::Str(&hex32(0x22))),
         ("suite", JsonValue::Str("bls12-381-g1")),
-        (
-            "public_key",
-            JsonValue::Str(&("0x".to_string() + &"44".repeat(48))),
-        ),
+        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ]);
     let source = StubSource::new(payload);
@@ -73,10 +70,7 @@ fn domain_id_mismatch_surfaces_incompatible_load_error() {
         ("domain_id", JsonValue::Str(&hex32(0xAA))),
         ("active_key_id", JsonValue::Str(&hex32(0x22))),
         ("suite", JsonValue::Str("bls12-381-g1")),
-        (
-            "public_key",
-            JsonValue::Str(&("0x".to_string() + &"44".repeat(48))),
-        ),
+        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ]);
     let source = StubSource::new(payload);
@@ -96,10 +90,7 @@ fn unknown_suite_in_payload_is_parse_error_not_compatibility_error() {
         ("domain_id", JsonValue::Str(&hex32(0x11))),
         ("active_key_id", JsonValue::Str(&hex32(0x22))),
         ("suite", JsonValue::Str("not-a-real-suite")),
-        (
-            "public_key",
-            JsonValue::Str(&("0x".to_string() + &"44".repeat(48))),
-        ),
+        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ]);
     let source = StubSource::new(payload);
@@ -114,7 +105,7 @@ fn unknown_suite_in_payload_is_parse_error_not_compatibility_error() {
 
 #[test]
 fn public_key_byte_length_off_by_one_is_key_shape_mismatch() {
-    let short_key = "0x".to_string() + &"44".repeat(47);
+    let short_key = hex_bytes(0x44, 47);
     let payload = build_json(&[
         ("chain_id", JsonValue::Uint(1)),
         ("domain_id", JsonValue::Str(&hex32(0x11))),
@@ -183,10 +174,7 @@ fn unavailable_failure_is_distinct_from_malformed_and_incompatible() {
         ("domain_id", JsonValue::Str(&hex32(0x11))),
         ("active_key_id", JsonValue::Str(&hex32(0x22))),
         ("suite", JsonValue::Str("bls12-381-g1")),
-        (
-            "public_key",
-            JsonValue::Str(&("0x".to_string() + &"44".repeat(48))),
-        ),
+        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ]);
     let incompatible = load_mpc_public_config(
@@ -219,10 +207,7 @@ fn parse_rejects_missing_field() {
         ("domain_id", JsonValue::Str(&hex32(0x11))),
         ("active_key_id", JsonValue::Str(&hex32(0x22))),
         ("suite", JsonValue::Str("bls12-381-g1")),
-        (
-            "public_key",
-            JsonValue::Str(&("0x".to_string() + &"44".repeat(48))),
-        ),
+        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
     ]);
 
     let err = parse_mpc_public_config(&payload).unwrap_err();
@@ -242,10 +227,7 @@ fn parse_rejects_unexpected_extra_field() {
         ("domain_id", JsonValue::Str(&hex32(0x11))),
         ("active_key_id", JsonValue::Str(&hex32(0x22))),
         ("suite", JsonValue::Str("bls12-381-g1")),
-        (
-            "public_key",
-            JsonValue::Str(&("0x".to_string() + &"44".repeat(48))),
-        ),
+        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
         ("rogue_field", JsonValue::Uint(0)),
     ]);
@@ -266,10 +248,7 @@ fn parse_rejects_invalid_hex_digit_in_domain_id() {
         ("domain_id", JsonValue::Str(&bad_domain)),
         ("active_key_id", JsonValue::Str(&hex32(0x22))),
         ("suite", JsonValue::Str("bls12-381-g1")),
-        (
-            "public_key",
-            JsonValue::Str(&("0x".to_string() + &"44".repeat(48))),
-        ),
+        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ]);
 
