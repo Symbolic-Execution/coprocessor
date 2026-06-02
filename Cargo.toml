@@ -1,3 +1,7 @@
 [workspace]
-members = ["crates/handle-graph-core", "crates/ciphertext-binding"]
+members = [
+    "crates/handle-graph-core",
+    "crates/ciphertext-binding",
+    "crates/transport-json",
+]
 resolver = "2"
