@@ -152,13 +152,11 @@ impl CoprocessorHost {
         Self::from_handle_graph_core(config, HandleGraphCore::new())
     }
 
-    /// Construct a host whose Handle Graph state is rehydrated from
-    /// `persistence`. After restart this is the entry point that re-seeds the
-    /// host-owned [`HandleGraphCore`]'s record map and consumed-event set, so
-    /// ingestion replay remains idempotent by `ChainEventRef`, canonical and
-    /// audit reads return the same Handle Records observed before the
-    /// restart, and Resolution Readiness reports the same Pending Derived
-    /// Handles whose ordered inputs are all canonical and Ready.
+    /// Construct a host whose [`HandleGraphCore`] is restored from
+    /// `persistence`. The restored graph includes Handle Records, consumed
+    /// Chain Event refs, and tombstone state, so host reads, ingestion replay,
+    /// and Resolution Readiness observe the same graph state as before the
+    /// restart.
     ///
     /// The restored host returns in [`LifecycleState::NotStarted`]; callers
     /// must still invoke [`Self::start`] before the host serves traffic, so
@@ -166,7 +164,7 @@ impl CoprocessorHost {
     /// a fresh boot.
     ///
     /// The restored Handle Graph uses [`PlaintextMaterializer::default`].
-    /// Callers that subsequently ingest Plaintext Handle events should use
+    /// Callers that subsequently ingest Plaintext Handle events should prefer
     /// [`Self::restore_from_persistence_with_materializer`] so post-restart
     /// Plaintext Handle ingestion keeps producing real `SystemCiphertextV1`
     /// envelopes bound to the host's active MPC key id.

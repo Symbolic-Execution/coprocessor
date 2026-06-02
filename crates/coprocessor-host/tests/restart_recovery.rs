@@ -17,8 +17,9 @@
 
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
-    HandleGraphCore, HandleId, HandleKey, HandleType, ImportedHandle, InMemoryHandlePersistence,
-    IngestionOutcome, MaterializationReceipt, OperationCode, SystemCiphertextV1,
+    HandleGraphCore, HandleId, HandleKey, HandleRecord, HandleState, HandleType, ImportedHandle,
+    InMemoryHandlePersistence, IngestionOutcome, MaterializationReceipt, OperationCode,
+    ResolutionReadiness, SystemCiphertextV1,
 };
 use coprocessor_host::{
     CoprocessorHost, HandleStateFailureCategory, HandleStateView, HostConfig, LifecycleState,
@@ -40,11 +41,13 @@ fn restored_host_starts_in_not_started_and_starts_running() {
 #[test]
 fn restored_host_serves_ready_record_via_get_handle_state() {
     let mut store = InMemoryHandlePersistence::new();
-    let mut pre = HandleGraphCore::new();
+    let mut before_restart = HandleGraphCore::new();
     let key = handle_key(1, 7, 1);
     let ciphertext = SystemCiphertextV1(vec![0xAA, 0xBB]);
     let receipt = MaterializationReceipt(vec![0xCC, 0xDD]);
-    let _ = pre.apply_chain_event_with_persistence(
+    record_event(
+        &mut before_restart,
+        &mut store,
         imported_event(
             key,
             HandleType::Suint256,
@@ -52,7 +55,6 @@ fn restored_host_serves_ready_record_via_get_handle_state() {
             ciphertext.clone(),
             receipt.clone(),
         ),
-        &mut store,
     );
 
     let host = boot_restored_host(&store);
@@ -69,10 +71,12 @@ fn restored_host_serves_ready_record_via_get_handle_state() {
 #[test]
 fn restored_host_serves_pending_derived_record_via_get_handle_state() {
     let mut store = InMemoryHandlePersistence::new();
-    let mut pre = HandleGraphCore::new();
-    let (a, b) = seed_imported_pair(&mut pre, &mut store);
+    let mut before_restart = HandleGraphCore::new();
+    let (a, b) = seed_imported_pair(&mut before_restart, &mut store);
     let derived = handle_key(1, 7, 3);
-    let _ = pre.apply_chain_event_with_persistence(
+    record_event(
+        &mut before_restart,
+        &mut store,
         derived_event(
             derived,
             OperationCode::Add,
@@ -80,7 +84,6 @@ fn restored_host_serves_pending_derived_record_via_get_handle_state() {
             vec![a, b],
             chain_event_ref(1, 2, 1),
         ),
-        &mut store,
     );
 
     let host = boot_restored_host(&store);
@@ -91,10 +94,12 @@ fn restored_host_serves_pending_derived_record_via_get_handle_state() {
 #[test]
 fn restored_host_serves_failed_derived_record_with_stable_category() {
     let mut store = InMemoryHandlePersistence::new();
-    let mut pre = HandleGraphCore::new();
-    let (a, _) = seed_imported_pair(&mut pre, &mut store);
+    let mut before_restart = HandleGraphCore::new();
+    let (a, _) = seed_imported_pair(&mut before_restart, &mut store);
     let failed = handle_key(1, 7, 4);
-    let _ = pre.apply_chain_event_with_persistence(
+    record_event(
+        &mut before_restart,
+        &mut store,
         derived_event(
             failed,
             OperationCode::Add,
@@ -102,7 +107,6 @@ fn restored_host_serves_failed_derived_record_with_stable_category() {
             vec![a],
             chain_event_ref(1, 2, 1),
         ),
-        &mut store,
     );
 
     let host = boot_restored_host(&store);
@@ -118,10 +122,12 @@ fn restored_host_serves_failed_derived_record_with_stable_category() {
 #[test]
 fn restored_host_hides_tombstoned_record_from_canonical_reads() {
     let mut store = InMemoryHandlePersistence::new();
-    let mut pre = HandleGraphCore::new();
+    let mut before_restart = HandleGraphCore::new();
     let key = handle_key(1, 7, 5);
     let event_ref = chain_event_ref(1, 1, 1);
-    let _ = pre.apply_chain_event_with_persistence(
+    record_event(
+        &mut before_restart,
+        &mut store,
         imported_event(
             key,
             HandleType::Suint256,
@@ -129,9 +135,8 @@ fn restored_host_hides_tombstoned_record_from_canonical_reads() {
             SystemCiphertextV1(vec![1]),
             MaterializationReceipt(vec![2]),
         ),
-        &mut store,
     );
-    pre.apply_orphan_discard_with_persistence(&[event_ref], &mut store);
+    before_restart.apply_orphan_discard_with_persistence(&[event_ref], &mut store);
 
     let host = boot_restored_host(&store);
 
@@ -150,10 +155,12 @@ fn restored_host_reports_unknown_for_handle_keys_that_were_never_recorded() {
 #[test]
 fn restored_host_resolution_readiness_matches_pre_restart_readiness() {
     let mut store = InMemoryHandlePersistence::new();
-    let mut pre = HandleGraphCore::new();
-    let (a, b) = seed_imported_pair(&mut pre, &mut store);
+    let mut before_restart = HandleGraphCore::new();
+    let (a, b) = seed_imported_pair(&mut before_restart, &mut store);
     let derived = handle_key(1, 7, 6);
-    let _ = pre.apply_chain_event_with_persistence(
+    record_event(
+        &mut before_restart,
+        &mut store,
         derived_event(
             derived,
             OperationCode::Add,
@@ -161,9 +168,8 @@ fn restored_host_resolution_readiness_matches_pre_restart_readiness() {
             vec![a, b],
             chain_event_ref(1, 2, 1),
         ),
-        &mut store,
     );
-    let before = pre.resolution_readiness();
+    let before = before_restart.resolution_readiness();
     assert_eq!(before.len(), 1, "precondition: derived should be ready");
 
     let host = boot_restored_host(&store);
@@ -179,14 +185,16 @@ fn restored_host_resolution_readiness_matches_pre_restart_readiness() {
 #[test]
 fn restored_host_excludes_tombstoned_derived_from_resolution_readiness() {
     let mut store = InMemoryHandlePersistence::new();
-    let mut pre = HandleGraphCore::new();
-    let (a, b) = seed_imported_pair(&mut pre, &mut store);
-    let a_event_ref = pre
+    let mut before_restart = HandleGraphCore::new();
+    let (a, b) = seed_imported_pair(&mut before_restart, &mut store);
+    let a_event_ref = before_restart
         .canonical_handle(&a)
         .expect("seeded a record must be canonical")
         .event_ref;
     let derived = handle_key(1, 7, 7);
-    let _ = pre.apply_chain_event_with_persistence(
+    record_event(
+        &mut before_restart,
+        &mut store,
         derived_event(
             derived,
             OperationCode::Add,
@@ -194,9 +202,8 @@ fn restored_host_excludes_tombstoned_derived_from_resolution_readiness() {
             vec![a, b],
             chain_event_ref(1, 2, 1),
         ),
-        &mut store,
     );
-    let outcome = pre.apply_orphan_discard_with_persistence(&[a_event_ref], &mut store);
+    let outcome = before_restart.apply_orphan_discard_with_persistence(&[a_event_ref], &mut store);
     assert_eq!(
         outcome.cascade_tombstoned,
         vec![derived],
@@ -214,7 +221,7 @@ fn restored_host_excludes_tombstoned_derived_from_resolution_readiness() {
 #[test]
 fn restored_host_replays_consumed_events_idempotently() {
     let mut store = InMemoryHandlePersistence::new();
-    let mut pre = HandleGraphCore::new();
+    let mut before_restart = HandleGraphCore::new();
     let key = handle_key(1, 7, 8);
     let event_ref = chain_event_ref(1, 1, 1);
     let event = imported_event(
@@ -224,7 +231,7 @@ fn restored_host_replays_consumed_events_idempotently() {
         SystemCiphertextV1(vec![1, 2, 3]),
         MaterializationReceipt(vec![4, 5, 6]),
     );
-    let _ = pre.apply_chain_event_with_persistence(event.clone(), &mut store);
+    record_event(&mut before_restart, &mut store, event.clone());
 
     let mut host = boot_restored_host(&store);
     let replay = host.handle_graph_core_mut().apply_chain_event(event);
@@ -238,12 +245,14 @@ fn restored_host_replays_consumed_events_idempotently() {
 #[test]
 fn restored_host_audit_view_exposes_tombstoned_record_with_original_state() {
     let mut store = InMemoryHandlePersistence::new();
-    let mut pre = HandleGraphCore::new();
+    let mut before_restart = HandleGraphCore::new();
     let key = handle_key(1, 7, 9);
     let event_ref = chain_event_ref(1, 1, 1);
     let ciphertext = SystemCiphertextV1(vec![0xAA, 0xBB]);
     let receipt = MaterializationReceipt(vec![0xCC, 0xDD]);
-    let _ = pre.apply_chain_event_with_persistence(
+    record_event(
+        &mut before_restart,
+        &mut store,
         imported_event(
             key,
             HandleType::Suint256,
@@ -251,9 +260,8 @@ fn restored_host_audit_view_exposes_tombstoned_record_with_original_state() {
             ciphertext.clone(),
             receipt.clone(),
         ),
-        &mut store,
     );
-    pre.apply_orphan_discard_with_persistence(&[event_ref], &mut store);
+    before_restart.apply_orphan_discard_with_persistence(&[event_ref], &mut store);
 
     let host = boot_restored_host(&store);
 
@@ -265,7 +273,7 @@ fn restored_host_audit_view_exposes_tombstoned_record_with_original_state() {
     assert_eq!(audit.event_ref, event_ref);
     assert_eq!(
         audit.state,
-        coprocessor_handle_graph_core::HandleState::Ready {
+        HandleState::Ready {
             system_ciphertext: ciphertext,
             materialization_receipt: receipt,
         }
@@ -285,7 +293,9 @@ fn seed_imported_pair(
 ) -> (HandleKey, HandleKey) {
     let a = handle_key(1, 7, 1);
     let b = handle_key(1, 7, 2);
-    let _ = pre.apply_chain_event_with_persistence(
+    record_event(
+        pre,
+        store,
         imported_event(
             a,
             HandleType::Suint256,
@@ -293,9 +303,10 @@ fn seed_imported_pair(
             SystemCiphertextV1(vec![0xA1]),
             MaterializationReceipt(vec![0xA2]),
         ),
-        store,
     );
-    let _ = pre.apply_chain_event_with_persistence(
+    record_event(
+        pre,
+        store,
         imported_event(
             b,
             HandleType::Suint256,
@@ -303,16 +314,30 @@ fn seed_imported_pair(
             SystemCiphertextV1(vec![0xB1]),
             MaterializationReceipt(vec![0xB2]),
         ),
-        store,
     );
     (a, b)
 }
 
-fn sort_by_handle_key(
-    mut readiness: Vec<coprocessor_handle_graph_core::ResolutionReadiness>,
-) -> Vec<coprocessor_handle_graph_core::ResolutionReadiness> {
-    readiness.sort_by_key(|entry| (entry.handle_key.chain_id.0, entry.handle_key.handle_id.0));
+fn sort_by_handle_key(mut readiness: Vec<ResolutionReadiness>) -> Vec<ResolutionReadiness> {
+    readiness.sort_by_key(|entry| {
+        (
+            entry.handle_key.chain_id.0,
+            entry.handle_key.contract_address.0,
+            entry.handle_key.handle_id.0,
+        )
+    });
     readiness
+}
+
+fn record_event(
+    core: &mut HandleGraphCore,
+    store: &mut InMemoryHandlePersistence,
+    event: ChainEvent,
+) -> HandleRecord {
+    match core.apply_chain_event_with_persistence(event, store) {
+        IngestionOutcome::Recorded(record) => record,
+        other => panic!("expected recorded chain event, got {other:?}"),
+    }
 }
 
 fn imported_event(
