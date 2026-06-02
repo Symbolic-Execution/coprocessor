@@ -198,7 +198,11 @@ fn select_readiness_preserves_predicate_when_true_when_false_order() {
     );
     assert_eq!(
         entry.input_system_ciphertexts,
-        vec![predicate_ciphertext, when_true_ciphertext, when_false_ciphertext],
+        vec![
+            predicate_ciphertext,
+            when_true_ciphertext,
+            when_false_ciphertext
+        ],
         "Select ciphertexts must match the input handle key order"
     );
 }
@@ -337,14 +341,16 @@ fn seed_imported_with_ciphertext(
     event_ref: ChainEventRef,
     system_ciphertext: SystemCiphertextV1,
 ) {
-    let _ = expect_recorded(core.apply_chain_event(ChainEvent::ImportedHandle(ImportedHandle {
-        domain_id: DomainId(bytes32(DEFAULT_DOMAIN)),
-        handle_key,
-        handle_type,
-        system_ciphertext,
-        materialization_receipt: MaterializationReceipt(vec![0xEE]),
-        event_ref,
-    })));
+    let _ = expect_recorded(
+        core.apply_chain_event(ChainEvent::ImportedHandle(ImportedHandle {
+            domain_id: DomainId(bytes32(DEFAULT_DOMAIN)),
+            handle_key,
+            handle_type,
+            system_ciphertext,
+            materialization_receipt: MaterializationReceipt(vec![0xEE]),
+            event_ref,
+        })),
+    );
 }
 
 fn expect_recorded(outcome: IngestionOutcome) -> HandleRecord {

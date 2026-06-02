@@ -15,11 +15,7 @@ fn handle_imported_v1_log_decodes_into_imported_handle_chain_event() {
         block_hash: bytes32(0xB1),
         tx_hash: bytes32(0xC1),
         log_index: 2,
-        topics: vec![
-            HANDLE_IMPORTED_V1_SIGNATURE,
-            bytes32(0xD0),
-            bytes32(0x42),
-        ],
+        topics: vec![HANDLE_IMPORTED_V1_SIGNATURE, bytes32(0xD0), bytes32(0x42)],
         data: encode_imported_v1_data(HandleType::Suint256, &[1, 2, 3, 4], &[9, 9]),
     };
 
@@ -37,8 +33,14 @@ fn handle_imported_v1_log_decodes_into_imported_handle_chain_event() {
         }
     );
     assert_eq!(imported.handle_type, HandleType::Suint256);
-    assert_eq!(imported.system_ciphertext, SystemCiphertextV1(vec![1, 2, 3, 4]));
-    assert_eq!(imported.materialization_receipt, MaterializationReceipt(vec![9, 9]));
+    assert_eq!(
+        imported.system_ciphertext,
+        SystemCiphertextV1(vec![1, 2, 3, 4])
+    );
+    assert_eq!(
+        imported.materialization_receipt,
+        MaterializationReceipt(vec![9, 9])
+    );
     assert_eq!(
         imported.event_ref,
         ChainEventRef {
@@ -62,11 +64,7 @@ fn handle_imported_v1_preserves_opaque_ciphertext_bytes_unchanged() {
         block_hash: bytes32(1),
         tx_hash: bytes32(1),
         log_index: 0,
-        topics: vec![
-            HANDLE_IMPORTED_V1_SIGNATURE,
-            bytes32(0xD0),
-            bytes32(1),
-        ],
+        topics: vec![HANDLE_IMPORTED_V1_SIGNATURE, bytes32(0xD0), bytes32(1)],
         data: encode_imported_v1_data(HandleType::Sbool, &ciphertext, &receipt),
     };
 
@@ -109,7 +107,10 @@ fn handle_from_plaintext_v1_log_decodes_into_plaintext_handle_chain_event() {
         }
     );
     assert_eq!(plaintext.handle_type, HandleType::Suint256);
-    assert_eq!(plaintext.public_value, PublicPlaintextValue(vec![10, 20, 30]));
+    assert_eq!(
+        plaintext.public_value,
+        PublicPlaintextValue(vec![10, 20, 30])
+    );
     assert_eq!(
         plaintext.event_ref,
         ChainEventRef {
@@ -211,7 +212,10 @@ fn operation_requested_v1_decodes_every_operation_code_discriminant() {
         let event = decode_chain_log(&log)
             .unwrap_or_else(|err| panic!("opcode {:?} must decode, got {:?}", operation_code, err));
         let ChainEvent::DerivedHandleOperation(op) = event else {
-            panic!("expected DerivedHandleOperation for opcode {:?}", operation_code);
+            panic!(
+                "expected DerivedHandleOperation for opcode {:?}",
+                operation_code
+            );
         };
         assert_eq!(op.operation_code, *operation_code);
         assert_eq!(op.output_handle_type, *output_type);
@@ -293,11 +297,7 @@ fn truncated_imported_v1_data_is_rejected() {
         block_hash: bytes32(1),
         tx_hash: bytes32(1),
         log_index: 0,
-        topics: vec![
-            HANDLE_IMPORTED_V1_SIGNATURE,
-            bytes32(0xD0),
-            bytes32(0x42),
-        ],
+        topics: vec![HANDLE_IMPORTED_V1_SIGNATURE, bytes32(0xD0), bytes32(0x42)],
         data,
     };
     assert!(matches!(
@@ -332,6 +332,35 @@ fn truncated_operation_v1_input_list_is_rejected() {
         decode_chain_log(&log),
         Err(ChainLogDecodeError::TruncatedData { .. })
     ));
+}
+
+#[test]
+fn oversized_operation_v1_input_count_is_rejected_without_allocating_inputs() {
+    let mut data = Vec::new();
+    data.push(operation_code_byte(OperationCode::Add));
+    data.push(handle_type_byte(HandleType::Suint256));
+    data.extend_from_slice(&u32::MAX.to_be_bytes());
+    let log = ChainLog {
+        chain_id: ChainId(1),
+        contract_address: ContractAddress([7; 20]),
+        block_number: 1,
+        block_hash: bytes32(1),
+        tx_hash: bytes32(1),
+        log_index: 0,
+        topics: vec![
+            OPERATION_REQUESTED_V1_SIGNATURE,
+            bytes32(0xD0),
+            bytes32(0x99),
+        ],
+        data,
+    };
+    assert_eq!(
+        decode_chain_log(&log),
+        Err(ChainLogDecodeError::TruncatedData {
+            needed: 32,
+            available: 0,
+        })
+    );
 }
 
 #[test]
@@ -373,11 +402,7 @@ fn unknown_handle_type_byte_is_rejected() {
         block_hash: bytes32(1),
         tx_hash: bytes32(1),
         log_index: 0,
-        topics: vec![
-            HANDLE_IMPORTED_V1_SIGNATURE,
-            bytes32(0xD0),
-            bytes32(0x42),
-        ],
+        topics: vec![HANDLE_IMPORTED_V1_SIGNATURE, bytes32(0xD0), bytes32(0x42)],
         data,
     };
     assert_eq!(
@@ -397,11 +422,7 @@ fn trailing_data_after_imported_v1_is_rejected() {
         block_hash: bytes32(1),
         tx_hash: bytes32(1),
         log_index: 0,
-        topics: vec![
-            HANDLE_IMPORTED_V1_SIGNATURE,
-            bytes32(0xD0),
-            bytes32(0x42),
-        ],
+        topics: vec![HANDLE_IMPORTED_V1_SIGNATURE, bytes32(0xD0), bytes32(0x42)],
         data,
     };
     assert!(matches!(
@@ -419,11 +440,7 @@ fn decoded_imported_handle_event_flows_into_apply_chain_event() {
         block_hash: bytes32(0xB1),
         tx_hash: bytes32(0xC1),
         log_index: 0,
-        topics: vec![
-            HANDLE_IMPORTED_V1_SIGNATURE,
-            bytes32(0xD0),
-            bytes32(0x42),
-        ],
+        topics: vec![HANDLE_IMPORTED_V1_SIGNATURE, bytes32(0xD0), bytes32(0x42)],
         data: encode_imported_v1_data(HandleType::Suint256, &[1, 2, 3], &[7, 8]),
     };
     let event = decode_chain_log(&log).expect("decode imported");
@@ -446,11 +463,7 @@ fn decoded_imported_handle_event_flows_into_apply_chain_event() {
 // keeps the encoder/decoder symmetric for tests without exposing helpers from
 // the production surface.
 
-fn encode_imported_v1_data(
-    handle_type: HandleType,
-    ciphertext: &[u8],
-    receipt: &[u8],
-) -> Vec<u8> {
+fn encode_imported_v1_data(handle_type: HandleType, ciphertext: &[u8], receipt: &[u8]) -> Vec<u8> {
     let mut data = Vec::new();
     data.push(handle_type_byte(handle_type));
     data.extend_from_slice(&(ciphertext.len() as u32).to_be_bytes());

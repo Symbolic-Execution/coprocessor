@@ -159,7 +159,12 @@ fn canonical_query_returns_pending_derived_handle() {
 fn canonical_query_returns_failed_derived_handle_with_lineage_violation_reason() {
     let mut core = HandleGraphCore::new();
     let known = handle_key(1, 7, 1);
-    seed_imported(&mut core, known, HandleType::Suint256, chain_event_ref(1, 1, 1));
+    seed_imported(
+        &mut core,
+        known,
+        HandleType::Suint256,
+        chain_event_ref(1, 1, 1),
+    );
     let unknown_input = handle_key(1, 7, 77);
     let derived = handle_key(1, 7, 10);
     let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
@@ -176,16 +181,20 @@ fn canonical_query_returns_failed_derived_handle_with_lineage_violation_reason()
 
     match &record.state {
         HandleState::Failed {
-            reason: FailureReason::LineageViolation(LineageViolation::UnknownInputHandle {
-                input_handle_key,
-            }),
+            reason:
+                FailureReason::LineageViolation(LineageViolation::UnknownInputHandle {
+                    input_handle_key,
+                }),
         } => {
             assert_eq!(
                 *input_handle_key, unknown_input,
                 "canonical query must surface the offending input handle key"
             );
         }
-        other => panic!("expected Failed/LineageViolation/UnknownInputHandle, got {:?}", other),
+        other => panic!(
+            "expected Failed/LineageViolation/UnknownInputHandle, got {:?}",
+            other
+        ),
     }
 }
 
@@ -220,7 +229,10 @@ fn canonical_query_returns_failed_derived_handle_with_operation_violation_reason
             assert_eq!(*expected, 2);
             assert_eq!(*actual, 1);
         }
-        other => panic!("expected Failed/OperationViolation/WrongArity, got {:?}", other),
+        other => panic!(
+            "expected Failed/OperationViolation/WrongArity, got {:?}",
+            other
+        ),
     }
 }
 
@@ -364,7 +376,7 @@ fn audit_query_returns_tombstoned_record_hidden_from_canonical() {
 // ---------- Audit/debug query exposes ChainEventRef, HandleKey, HandleType, HandleState, status ----------
 
 #[test]
-fn audit_query_exposes_chain_event_ref_handle_key_type_state_and_canonicality_for_tombstoned_record() {
+fn audit_query_exposes_tombstoned_record_metadata_and_status() {
     let mut core = HandleGraphCore::new();
     let key = handle_key(1, 7, 1);
     let event_ref = chain_event_ref(1, 1, 1);
@@ -398,10 +410,7 @@ fn audit_query_exposes_chain_event_ref_handle_key_type_state_and_canonicality_fo
         record.is_canonical,
         "audit must expose canonicality status — original canonicality is preserved even after tombstoning"
     );
-    assert!(
-        record.is_tombstoned,
-        "audit must expose tombstone status"
-    );
+    assert!(record.is_tombstoned, "audit must expose tombstone status");
 }
 
 #[test]

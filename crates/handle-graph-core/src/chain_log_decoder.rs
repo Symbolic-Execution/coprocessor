@@ -90,7 +90,10 @@ pub fn decode_chain_log(log: &ChainLog) -> Result<ChainEvent, ChainLogDecodeErro
     }
 }
 
-fn decode_imported(log: &ChainLog, event_ref: ChainEventRef) -> Result<ChainEvent, ChainLogDecodeError> {
+fn decode_imported(
+    log: &ChainLog,
+    event_ref: ChainEventRef,
+) -> Result<ChainEvent, ChainLogDecodeError> {
     let (domain_id, handle_id) = expect_source_handle_topics(log, HANDLE_IMPORTED_V1_SIGNATURE)?;
     let mut cursor = Cursor::new(&log.data);
     let handle_type = cursor.read_handle_type()?;
@@ -108,7 +111,10 @@ fn decode_imported(log: &ChainLog, event_ref: ChainEventRef) -> Result<ChainEven
     }))
 }
 
-fn decode_plaintext(log: &ChainLog, event_ref: ChainEventRef) -> Result<ChainEvent, ChainLogDecodeError> {
+fn decode_plaintext(
+    log: &ChainLog,
+    event_ref: ChainEventRef,
+) -> Result<ChainEvent, ChainLogDecodeError> {
     let (domain_id, handle_id) =
         expect_source_handle_topics(log, HANDLE_FROM_PLAINTEXT_V1_SIGNATURE)?;
     let mut cursor = Cursor::new(&log.data);
@@ -124,14 +130,17 @@ fn decode_plaintext(log: &ChainLog, event_ref: ChainEventRef) -> Result<ChainEve
     }))
 }
 
-fn decode_operation(log: &ChainLog, event_ref: ChainEventRef) -> Result<ChainEvent, ChainLogDecodeError> {
+fn decode_operation(
+    log: &ChainLog,
+    event_ref: ChainEventRef,
+) -> Result<ChainEvent, ChainLogDecodeError> {
     let (domain_id, output_handle_id) =
         expect_source_handle_topics(log, OPERATION_REQUESTED_V1_SIGNATURE)?;
     let mut cursor = Cursor::new(&log.data);
     let operation_code = cursor.read_operation_code()?;
     let output_handle_type = cursor.read_handle_type()?;
     let input_count = cursor.read_u32()? as usize;
-    let mut input_handle_keys = Vec::with_capacity(input_count);
+    let mut input_handle_keys = Vec::new();
     for _ in 0..input_count {
         let raw = cursor.read_fixed::<32>()?;
         input_handle_keys.push(handle_key_from_log(log, HandleId(raw)));
@@ -208,15 +217,9 @@ impl<'a> Cursor<'a> {
     }
 
     fn read_slice(&mut self, n: usize) -> Result<&'a [u8], ChainLogDecodeError> {
-        let end = self.pos.checked_add(n).ok_or(ChainLogDecodeError::TruncatedData {
-            needed: n,
-            available: self.bytes.len().saturating_sub(self.pos),
-        })?;
+        let end = self.pos.checked_add(n).ok_or(self.truncated_data(n))?;
         if end > self.bytes.len() {
-            return Err(ChainLogDecodeError::TruncatedData {
-                needed: n,
-                available: self.bytes.len().saturating_sub(self.pos),
-            });
+            return Err(self.truncated_data(n));
         }
         let slice = &self.bytes[self.pos..end];
         self.pos = end;
@@ -245,6 +248,13 @@ impl<'a> Cursor<'a> {
             Err(ChainLogDecodeError::TrailingData {
                 unused: self.bytes.len() - self.pos,
             })
+        }
+    }
+
+    fn truncated_data(&self, needed: usize) -> ChainLogDecodeError {
+        ChainLogDecodeError::TruncatedData {
+            needed,
+            available: self.bytes.len().saturating_sub(self.pos),
         }
     }
 }
