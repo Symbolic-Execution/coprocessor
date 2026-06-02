@@ -21,7 +21,7 @@ pub use internal_api::{HandleStateFailureCategory, HandleStateView};
 
 mod chain_ingestion;
 
-pub use chain_ingestion::{ChainEventSource, ChainView, IngestionReport};
+pub use chain_ingestion::{ChainEventSource, ChainView, ChainViewPoll, IngestionReport};
 
 const ALL_DEPENDENCIES: [DependencyName; 3] = [
     DependencyName::SymVmEventSurface,
