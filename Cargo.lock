@@ -17,3 +17,11 @@ dependencies = [
 [[package]]
 name = "coprocessor-handle-graph-core"
 version = "0.1.0"
+
+[[package]]
+name = "coprocessor-transport-json"
+version = "0.1.0"
+dependencies = [
+ "coprocessor-ciphertext-binding",
+ "coprocessor-handle-graph-core",
+]

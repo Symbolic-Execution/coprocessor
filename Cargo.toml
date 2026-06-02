@@ -2,6 +2,7 @@
 members = [
     "crates/handle-graph-core",
     "crates/ciphertext-binding",
+    "crates/transport-json",
     "crates/enclave-runtime",
 ]
 resolver = "2"
