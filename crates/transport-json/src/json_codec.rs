@@ -110,13 +110,13 @@ pub fn parse_string(text: &str) -> Result<String, JsonParseError> {
     Ok(value)
 }
 
-pub fn parse_object(text: &str) -> Result<Object, JsonParseError> {
+pub fn parse_object(text: &str) -> Result<JsonObject, JsonParseError> {
     let mut reader = Reader::new(text);
     reader.skip_whitespace();
     let fields = reader.read_object()?;
     reader.skip_whitespace();
     reader.require_end()?;
-    Ok(Object { fields })
+    Ok(JsonObject { fields })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -125,11 +125,15 @@ enum FieldValue {
     Uint(u64),
 }
 
-pub struct Object {
+/// Parsed flat JSON object with string and unsigned-integer fields. Callers
+/// consume fields with [`JsonObject::take_string`] or
+/// [`JsonObject::take_uint`], then call [`JsonObject::finish`] to reject any
+/// keys the consumer did not claim.
+pub struct JsonObject {
     fields: Vec<(String, FieldValue)>,
 }
 
-impl Object {
+impl JsonObject {
     pub fn take_uint(&mut self, key: &'static str) -> Result<u64, JsonParseError> {
         match self.take(key)? {
             FieldValue::Uint(value) => Ok(value),
@@ -326,7 +330,7 @@ impl<'a> Reader<'a> {
 }
 
 /// Borrow a stable field name back from known parsed keys. Unknown keys can
-/// still fail while their value is being parsed, before [`Object::finish`]
+/// still fail while their value is being parsed, before [`JsonObject::finish`]
 /// rejects them as unexpected, so they use a generic non-payload field name.
 fn stable_field_name(key: &str) -> &'static str {
     match key {
