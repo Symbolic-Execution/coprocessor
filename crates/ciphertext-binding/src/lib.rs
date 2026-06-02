@@ -148,6 +148,87 @@ pub enum AadDecodeError {
     VersionOverflow(u64),
 }
 
+/// Kind discriminant for the three spec-defined ciphertext envelopes that wrap
+/// AAD and opaque cryptographic payload bytes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EnvelopeKind {
+    System,
+    Enclave,
+    Reader,
+}
+
+impl EnvelopeKind {
+    fn name(self) -> &'static str {
+        match self {
+            EnvelopeKind::System => "SystemCiphertextV1",
+            EnvelopeKind::Enclave => "EnclaveCiphertextV1",
+            EnvelopeKind::Reader => "ReaderCiphertextV1",
+        }
+    }
+
+    fn aad_matches(self, kind: AadKind) -> bool {
+        match self {
+            EnvelopeKind::System => {
+                matches!(kind, AadKind::SystemInput | AadKind::SystemHandle)
+            }
+            EnvelopeKind::Enclave => matches!(kind, AadKind::Enclave),
+            EnvelopeKind::Reader => matches!(kind, AadKind::Reader),
+        }
+    }
+}
+
+const ENVELOPE_ARRAY_LENGTH: usize = 4;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EnvelopeDecodeError {
+    Malformed {
+        envelope: EnvelopeKind,
+    },
+    NonCanonicalEncoding {
+        envelope: EnvelopeKind,
+    },
+    TrailingBytes {
+        envelope: EnvelopeKind,
+    },
+    WrongLength {
+        envelope: EnvelopeKind,
+        expected: usize,
+        actual: usize,
+    },
+    WrongFieldType {
+        envelope: EnvelopeKind,
+        field: &'static str,
+        expected: &'static str,
+    },
+    VersionOverflow {
+        envelope: EnvelopeKind,
+        value: u64,
+    },
+    AadBindingMismatch {
+        envelope: EnvelopeKind,
+        actual: AadKind,
+    },
+    AadDecode {
+        envelope: EnvelopeKind,
+        error: AadDecodeError,
+    },
+}
+
+impl EnvelopeDecodeError {
+    pub fn envelope(&self) -> EnvelopeKind {
+        match self {
+            EnvelopeDecodeError::Malformed { envelope }
+            | EnvelopeDecodeError::NonCanonicalEncoding { envelope }
+            | EnvelopeDecodeError::TrailingBytes { envelope }
+            | EnvelopeDecodeError::WrongLength { envelope, .. }
+            | EnvelopeDecodeError::WrongFieldType { envelope, .. }
+            | EnvelopeDecodeError::VersionOverflow { envelope, .. }
+            | EnvelopeDecodeError::AadBindingMismatch { envelope, .. }
+            | EnvelopeDecodeError::AadDecode { envelope, .. } => *envelope,
+        }
+    }
+}
+
 impl From<SystemInputAadV1> for CiphertextBindingAad {
     fn from(value: SystemInputAadV1) -> Self {
         CiphertextBindingAad::SystemInput(value)
@@ -652,5 +733,243 @@ impl<'a> Reader<'a> {
             major,
             argument: arg,
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ciphertext envelopes
+//
+// Each envelope is a canonical CBOR array of exactly four elements:
+//
+//   [ version: uint(u8), aad: bstr, wrapped_key: bstr, ciphertext: bstr ]
+//
+// `wrapped_key` and `ciphertext` are opaque bytes: the host never inspects
+// them. `aad` is the canonical CBOR encoding of the matching AAD kind for the
+// envelope, so the decoder can bind AAD bytes to the right envelope without
+// re-deriving them. Per-envelope `decode` checks the embedded AAD kind matches.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SystemCiphertextV1 {
+    pub version: u8,
+    pub aad: Vec<u8>,
+    pub wrapped_key: Vec<u8>,
+    pub ciphertext: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EnclaveCiphertextV1 {
+    pub version: u8,
+    pub aad: Vec<u8>,
+    pub wrapped_key: Vec<u8>,
+    pub ciphertext: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReaderCiphertextV1 {
+    pub version: u8,
+    pub aad: Vec<u8>,
+    pub wrapped_key: Vec<u8>,
+    pub ciphertext: Vec<u8>,
+}
+
+impl SystemCiphertextV1 {
+    pub fn encode(&self) -> Vec<u8> {
+        encode_envelope(self.version, &self.aad, &self.wrapped_key, &self.ciphertext)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, EnvelopeDecodeError> {
+        let DecodedEnvelope {
+            version,
+            aad,
+            wrapped_key,
+            ciphertext,
+        } = decode_envelope(bytes, EnvelopeKind::System)?;
+        Ok(Self {
+            version,
+            aad,
+            wrapped_key,
+            ciphertext,
+        })
+    }
+}
+
+impl EnclaveCiphertextV1 {
+    pub fn encode(&self) -> Vec<u8> {
+        encode_envelope(self.version, &self.aad, &self.wrapped_key, &self.ciphertext)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, EnvelopeDecodeError> {
+        let DecodedEnvelope {
+            version,
+            aad,
+            wrapped_key,
+            ciphertext,
+        } = decode_envelope(bytes, EnvelopeKind::Enclave)?;
+        Ok(Self {
+            version,
+            aad,
+            wrapped_key,
+            ciphertext,
+        })
+    }
+}
+
+impl ReaderCiphertextV1 {
+    pub fn encode(&self) -> Vec<u8> {
+        encode_envelope(self.version, &self.aad, &self.wrapped_key, &self.ciphertext)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, EnvelopeDecodeError> {
+        let DecodedEnvelope {
+            version,
+            aad,
+            wrapped_key,
+            ciphertext,
+        } = decode_envelope(bytes, EnvelopeKind::Reader)?;
+        Ok(Self {
+            version,
+            aad,
+            wrapped_key,
+            ciphertext,
+        })
+    }
+}
+
+struct DecodedEnvelope {
+    version: u8,
+    aad: Vec<u8>,
+    wrapped_key: Vec<u8>,
+    ciphertext: Vec<u8>,
+}
+
+fn encode_envelope(version: u8, aad: &[u8], wrapped_key: &[u8], ciphertext: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_array_header(&mut out, ENVELOPE_ARRAY_LENGTH);
+    write_unsigned_integer(&mut out, version as u64);
+    write_byte_string(&mut out, aad);
+    write_byte_string(&mut out, wrapped_key);
+    write_byte_string(&mut out, ciphertext);
+    out
+}
+
+fn decode_envelope(
+    bytes: &[u8],
+    envelope: EnvelopeKind,
+) -> Result<DecodedEnvelope, EnvelopeDecodeError> {
+    let mut reader = Reader::new(bytes);
+    let array_len = read_array_header(&mut reader, envelope)?;
+    if array_len != ENVELOPE_ARRAY_LENGTH {
+        return Err(EnvelopeDecodeError::WrongLength {
+            envelope,
+            expected: ENVELOPE_ARRAY_LENGTH,
+            actual: array_len,
+        });
+    }
+    let version = read_envelope_version(&mut reader, envelope)?;
+    let aad = read_envelope_byte_string(&mut reader, envelope, "aad")?;
+    let wrapped_key = read_envelope_byte_string(&mut reader, envelope, "wrapped_key")?;
+    let ciphertext = read_envelope_byte_string(&mut reader, envelope, "ciphertext")?;
+    if !reader.done() {
+        return Err(EnvelopeDecodeError::TrailingBytes { envelope });
+    }
+    bind_aad_to_envelope(envelope, &aad)?;
+    Ok(DecodedEnvelope {
+        version,
+        aad,
+        wrapped_key,
+        ciphertext,
+    })
+}
+
+fn read_envelope_header(
+    reader: &mut Reader,
+    envelope: EnvelopeKind,
+) -> Result<CborHeader, EnvelopeDecodeError> {
+    reader
+        .read_header()
+        .map_err(|err| map_header_error(envelope, err))
+}
+
+fn read_array_header(
+    reader: &mut Reader,
+    envelope: EnvelopeKind,
+) -> Result<usize, EnvelopeDecodeError> {
+    let header = read_envelope_header(reader, envelope)?;
+    if header.major != MAJOR_ARRAY {
+        return Err(EnvelopeDecodeError::WrongFieldType {
+            envelope,
+            field: envelope.name(),
+            expected: "array",
+        });
+    }
+    usize::try_from(header.argument).map_err(|_| EnvelopeDecodeError::Malformed { envelope })
+}
+
+fn read_envelope_version(
+    reader: &mut Reader,
+    envelope: EnvelopeKind,
+) -> Result<u8, EnvelopeDecodeError> {
+    let header = read_envelope_header(reader, envelope)?;
+    if header.major != MAJOR_UINT {
+        return Err(EnvelopeDecodeError::WrongFieldType {
+            envelope,
+            field: "version",
+            expected: "unsigned integer",
+        });
+    }
+    u8::try_from(header.argument).map_err(|_| EnvelopeDecodeError::VersionOverflow {
+        envelope,
+        value: header.argument,
+    })
+}
+
+fn read_envelope_byte_string(
+    reader: &mut Reader,
+    envelope: EnvelopeKind,
+    field: &'static str,
+) -> Result<Vec<u8>, EnvelopeDecodeError> {
+    let header = read_envelope_header(reader, envelope)?;
+    if header.major != MAJOR_BYTE_STRING {
+        return Err(EnvelopeDecodeError::WrongFieldType {
+            envelope,
+            field,
+            expected: "byte string",
+        });
+    }
+    let len = usize::try_from(header.argument)
+        .map_err(|_| EnvelopeDecodeError::Malformed { envelope })?;
+    let payload = reader
+        .take(len)
+        .ok_or(EnvelopeDecodeError::Malformed { envelope })?;
+    Ok(payload.to_vec())
+}
+
+fn bind_aad_to_envelope(
+    envelope: EnvelopeKind,
+    aad_bytes: &[u8],
+) -> Result<(), EnvelopeDecodeError> {
+    let aad = CiphertextBindingAad::decode(aad_bytes)
+        .map_err(|error| EnvelopeDecodeError::AadDecode { envelope, error })?;
+    let kind = aad.kind();
+    if !envelope.aad_matches(kind) {
+        return Err(EnvelopeDecodeError::AadBindingMismatch {
+            envelope,
+            actual: kind,
+        });
+    }
+    Ok(())
+}
+
+fn map_header_error(envelope: EnvelopeKind, err: AadDecodeError) -> EnvelopeDecodeError {
+    match err {
+        AadDecodeError::Malformed => EnvelopeDecodeError::Malformed { envelope },
+        AadDecodeError::NonCanonicalEncoding => {
+            EnvelopeDecodeError::NonCanonicalEncoding { envelope }
+        }
+        other => EnvelopeDecodeError::AadDecode {
+            envelope,
+            error: other,
+        },
     }
 }
