@@ -1,7 +1,7 @@
 import * as sandcastle from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
-import { claudeAgent } from "./agents.mts";
+import { claudeAgent, codexAgent } from "./agents.mts";
 import {
   CommandError,
   formatError,
@@ -31,37 +31,58 @@ import {
 } from "./review-cache.mts";
 import { repairManagedWorktreeSubmodules } from "./worktree-repair.mts";
 
+const CODEX_AUTH_MOUNT = "/home/agent/.codex-host";
+const CODEX_SANDBOX_HOME = "/home/agent/.codex";
+
 const hooks = {
-  sandbox: { onSandboxReady: [{ command: "npm install" }] },
+  sandbox: {
+    onSandboxReady: [
+      { command: "npm install" },
+      {
+        command: [
+          `if [ ! -f ${CODEX_AUTH_MOUNT}/auth.json ]; then echo "Missing Codex subscription auth at ${CODEX_AUTH_MOUNT}/auth.json" >&2; exit 1; fi`,
+          `mkdir -p ${CODEX_SANDBOX_HOME}`,
+          `cp -f ${CODEX_AUTH_MOUNT}/auth.json ${CODEX_SANDBOX_HOME}/auth.json`,
+          `if [ -f ${CODEX_AUTH_MOUNT}/config.toml ]; then cp -f ${CODEX_AUTH_MOUNT}/config.toml ${CODEX_SANDBOX_HOME}/config.toml; fi`,
+          `chmod 600 ${CODEX_SANDBOX_HOME}/auth.json`,
+        ].join(" && "),
+      },
+    ],
+  },
 };
 
 const copyToWorktree = ["node_modules"];
 const plannerAgent = claudeAgent("claude-opus-4-8");
 const implementerAgent = claudeAgent("claude-opus-4-7");
-const reviewerAgent = claudeAgent("claude-opus-4-8");
+const reviewerAgent = codexAgent("gpt-5.5", { effort: "high" });
 
 const planSchema = z.object({
   issues: z.array(
     z.object({ id: z.string(), title: z.string(), branch: z.string() }),
   ),
 });
-
-type PlannerIssue = z.infer<typeof planSchema>["issues"][number];
+type PlannedIssueOutput = z.infer<typeof planSchema>["issues"][number];
 
 export async function planIssues(
   openIssues: GithubIssue[],
+  allOpenIssues: GithubIssue[],
   token: string,
   issueLabel: string,
+  codexHome: string,
 ): Promise<PlannedIssue[]> {
+  const externalOpenIssues = allOpenIssues.filter(
+    (issue) => !issue.labels.includes(issueLabel),
+  );
   const plan = await sandcastle.run({
     hooks,
-    sandbox: docker({ env: { GH_TOKEN: token } }),
+    sandbox: sandcastleDocker(token, codexHome),
     name: "planner",
     maxIterations: 1,
     agent: plannerAgent,
     promptFile: "./.sandcastle/plan-prompt.md",
     promptArgs: {
       ISSUES_JSON: JSON.stringify(openIssues, null, 2),
+      EXTERNAL_OPEN_ISSUES_JSON: JSON.stringify(externalOpenIssues, null, 2),
       ISSUE_LABEL: issueLabel,
     },
     output: sandcastle.Output.object({ tag: "plan", schema: planSchema }),
@@ -69,7 +90,7 @@ export async function planIssues(
 
   const issuesById = new Map(openIssues.map((issue) => [issue.id, issue]));
 
-  return plan.output.issues.map((planned: PlannerIssue) => {
+  return plan.output.issues.map((planned: PlannedIssueOutput) => {
     const issue = issuesById.get(planned.id);
     if (!issue) {
       throw new Error(`Planner returned unknown issue id: ${planned.id}`);
@@ -91,14 +112,15 @@ export async function runIssueWorkflow(options: {
   github: GithubConfig;
   githubClient: GithubClient;
   defaultBranch: string;
+  codexHome: string;
 }) {
-  const { issue, github, githubClient, defaultBranch } = options;
+  const { issue, github, githubClient, defaultBranch, codexHome } = options;
   await repairManagedWorktreeSubmodules(issue.branch);
 
   const sandbox = await sandcastle.createSandbox({
     branch: issue.branch,
     baseBranch: `origin/${defaultBranch}`,
-    sandbox: docker({ env: { GH_TOKEN: github.token } }),
+    sandbox: sandcastleDocker(github.token, codexHome),
     hooks,
     copyToWorktree,
   });
@@ -254,6 +276,19 @@ export async function runIssueWorkflow(options: {
       `#${issue.number}: PR left open because merge failed: ${pr.html_url}`,
     );
   }
+}
+
+function sandcastleDocker(token: string, codexHome: string) {
+  return docker({
+    env: { GH_TOKEN: token },
+    mounts: [
+      {
+        hostPath: codexHome,
+        sandboxPath: CODEX_AUTH_MOUNT,
+        readonly: true,
+      },
+    ],
+  });
 }
 
 async function runQualityGates(

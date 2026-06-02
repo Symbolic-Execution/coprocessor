@@ -376,8 +376,7 @@ fn audit_query_returns_tombstoned_record_hidden_from_canonical() {
 // ---------- Audit/debug query exposes ChainEventRef, HandleKey, HandleType, HandleState, status ----------
 
 #[test]
-fn audit_query_exposes_chain_event_ref_handle_key_type_state_and_canonicality_for_tombstoned_record(
-) {
+fn audit_query_exposes_tombstoned_record_metadata_and_status() {
     let mut core = HandleGraphCore::new();
     let key = handle_key(1, 7, 1);
     let event_ref = chain_event_ref(1, 1, 1);
