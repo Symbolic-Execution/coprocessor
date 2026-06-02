@@ -35,6 +35,11 @@ ENV PATH="/home/agent/.cargo/bin:$PATH"
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
   | sh -s -- -y --profile minimal --default-toolchain stable
 
+# Install Codex CLI for the Sandcastle review agent.
+USER root
+RUN npm install -g @openai/codex
+USER ${AGENT_UID}:${AGENT_GID}
+
 WORKDIR /home/agent
 
 # In worktree sandbox mode, Sandcastle bind-mounts the git worktree at /home/agent/workspace
