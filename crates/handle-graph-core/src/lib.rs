@@ -1,5 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
+mod chain_log_decoder;
+
+pub use chain_log_decoder::{
+    decode_chain_log, ChainLog, ChainLogDecodeError, HANDLE_FROM_PLAINTEXT_V1_SIGNATURE,
+    HANDLE_IMPORTED_V1_SIGNATURE, OPERATION_REQUESTED_V1_SIGNATURE,
+};
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ChainId(pub u64);
 
