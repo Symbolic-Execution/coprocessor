@@ -1,28 +1,9 @@
-//! Internal Coordinator API — read path for Canonical Handle Records.
+//! Internal Coordinator API read path for Canonical Handle Records.
 //!
-//! This module owns the projection from the in-memory [`HandleGraphCore`]
-//! representation of a Handle Record to the Coordinator-facing view returned
-//! by GET Handle State. The projection is the seam at which Coprocessor
-//! internals (lineage, materialization receipts, Failed reasons) become the
-//! stable API surface the Coordinator depends on.
-//!
-//! Three invariants belong to this seam:
-//!
-//! - Unknown Handle Keys and tombstoned Handle Records both collapse to
-//!   [`HandleStateView::Unknown`]. The Coordinator must not see Pending for a
-//!   Handle Key the Coprocessor has never observed or has tombstoned via
-//!   Orphan Discard, since Pending only applies to known Canonical Handle
-//!   Records.
-//! - Ready Handle Records always carry both `SystemCiphertextV1` and the
-//!   Materialization Receipt. The state itself owns those payloads, matching
-//!   the spec's "Ready always includes SystemCiphertextV1 and a
-//!   Materialization Receipt".
-//! - Failed Handle Records expose a stable category enum, never raw failure
-//!   detail strings. Categories follow the initial Failed taxonomy from
-//!   `CONTEXT.md` (`LineageViolation`, `OperationViolation`,
-//!   `MpcTransformationFailure`, `EnclaveExecutionFailure`,
-//!   `MaterializationFailure`); the latter three are reserved for future
-//!   slices and unreachable today.
+//! The projection in this module is where Handle Graph internals become the
+//! stable view returned by GET Handle State: unknown or tombstoned records
+//! collapse to `Unknown`, `Ready` keeps its ciphertext and receipt payloads,
+//! and `Failed` exposes only a stable category.
 
 use coprocessor_handle_graph_core::{
     FailureReason, HandleRecord, HandleState, MaterializationReceipt, SystemCiphertextV1,
@@ -67,9 +48,8 @@ pub enum HandleStateFailureCategory {
 }
 
 /// Projects an optional Canonical Handle Record into the API view. The host
-/// passes `None` when [`HandleGraphCore::canonical_handle`] reports unknown or
-/// tombstoned; tombstone-collapse and unknown-collapse therefore happen in the
-/// graph layer, not here, keeping the read path total against any Handle Key.
+/// passes `None` when canonical lookup reports unknown or tombstoned, keeping
+/// the read path total against any Handle Key.
 pub(crate) fn project_canonical(record: Option<&HandleRecord>) -> HandleStateView {
     let Some(record) = record else {
         return HandleStateView::Unknown;

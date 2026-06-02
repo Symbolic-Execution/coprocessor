@@ -2,9 +2,9 @@
 //!
 //! The Internal Coordinator API is the Coprocessor's backend surface used by
 //! the Coordinator to fetch Canonical Handle Records. This test file exercises
-//! the read path through the public host interface only. It does not reach
-//! into [`HandleGraphCore`] directly: Handle State, payload visibility, and
-//! the unknown/tombstoned collapse must all be observable from the
+//! the read path through the public host interface and drives setup through
+//! the host-owned Handle Graph Core. Handle State, payload visibility, and the
+//! unknown/tombstoned collapse must all be observable from the
 //! Coordinator-facing surface.
 //!
 //! The four acceptance criteria from issue #26:
@@ -18,8 +18,8 @@
 
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
-    HandleId, HandleKey, HandleType, ImportedHandle, MaterializationReceipt, OperationCode,
-    SystemCiphertextV1,
+    HandleId, HandleKey, HandleRecord, HandleType, ImportedHandle, IngestionOutcome,
+    MaterializationReceipt, OperationCode, SystemCiphertextV1,
 };
 use coprocessor_host::{CoprocessorHost, HandleStateFailureCategory, HandleStateView, HostConfig};
 
@@ -198,8 +198,11 @@ fn running_host() -> CoprocessorHost {
     host
 }
 
-fn ingest(host: &mut CoprocessorHost, event: ChainEvent) {
-    let _ = host.handle_graph_core_mut().apply_chain_event(event);
+fn ingest(host: &mut CoprocessorHost, event: ChainEvent) -> HandleRecord {
+    match host.handle_graph_core_mut().apply_chain_event(event) {
+        IngestionOutcome::Recorded(record) => record,
+        other => panic!("expected recorded chain event, got {other:?}"),
+    }
 }
 
 fn seed_suint_pair(host: &mut CoprocessorHost) -> (HandleKey, HandleKey) {
