@@ -4,8 +4,8 @@
 //! This slice of the Resolve Handle Request returns the current Handle State
 //! for already-known Canonical Handle Records, mirroring the GET Handle State
 //! response shape. It does not create placeholder Handle Records, does not
-//! schedule Resolution work, and must never mutate the Handle Graph by itself
-//! — even when called repeatedly against unknown or tombstoned Handle Keys.
+//! schedule Resolution work, and must never mutate the Handle Graph by itself,
+//! even when called repeatedly against unknown or tombstoned Handle Keys.
 //!
 //! The four acceptance criteria from issue #27:
 //! - Resolve returns Pending, Ready, or Failed for known Canonical Handle
@@ -40,14 +40,13 @@ fn resolve_handle_returns_ready_with_ciphertext_and_receipt_for_imported_handle(
     let receipt = MaterializationReceipt(vec![0xDD, 0xEE]);
     ingest(
         &mut host,
-        ChainEvent::ImportedHandle(ImportedHandle {
-            domain_id: DomainId([DEFAULT_DOMAIN; 32]),
-            handle_key: key,
-            handle_type: HandleType::Suint256,
-            system_ciphertext: ciphertext.clone(),
-            materialization_receipt: receipt.clone(),
-            event_ref: chain_event_ref(1, 1, 1),
-        }),
+        imported_event(
+            key,
+            HandleType::Suint256,
+            ciphertext.clone(),
+            receipt.clone(),
+            chain_event_ref(1, 1, 1),
+        ),
     );
 
     match host.resolve_handle(&key) {
@@ -69,14 +68,13 @@ fn resolve_handle_returns_pending_for_canonical_pending_derived_handle() {
     let derived = handle_key(1, 7, 10);
     ingest(
         &mut host,
-        ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
-            domain_id: DomainId([DEFAULT_DOMAIN; 32]),
-            handle_key: derived,
-            operation_code: OperationCode::Add,
-            output_handle_type: HandleType::Suint256,
-            input_handle_keys: vec![a, b],
-            event_ref: chain_event_ref(1, 2, 1),
-        }),
+        derived_event(
+            derived,
+            OperationCode::Add,
+            HandleType::Suint256,
+            vec![a, b],
+            chain_event_ref(1, 2, 1),
+        ),
     );
 
     assert_eq!(host.resolve_handle(&derived), HandleStateView::Pending);
@@ -95,14 +93,13 @@ fn resolve_handle_returns_failed_with_lineage_violation_category_for_unknown_inp
     let derived = handle_key(1, 7, 10);
     ingest(
         &mut host,
-        ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
-            domain_id: DomainId([DEFAULT_DOMAIN; 32]),
-            handle_key: derived,
-            operation_code: OperationCode::Add,
-            output_handle_type: HandleType::Suint256,
-            input_handle_keys: vec![known, handle_key(1, 7, 77)],
-            event_ref: chain_event_ref(1, 2, 1),
-        }),
+        derived_event(
+            derived,
+            OperationCode::Add,
+            HandleType::Suint256,
+            vec![known, handle_key(1, 7, 77)],
+            chain_event_ref(1, 2, 1),
+        ),
     );
 
     assert_eq!(
@@ -120,14 +117,13 @@ fn resolve_handle_returns_failed_with_operation_violation_category_for_wrong_ari
     let derived = handle_key(1, 7, 11);
     ingest(
         &mut host,
-        ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
-            domain_id: DomainId([DEFAULT_DOMAIN; 32]),
-            handle_key: derived,
-            operation_code: OperationCode::Add,
-            output_handle_type: HandleType::Suint256,
-            input_handle_keys: vec![a],
-            event_ref: chain_event_ref(1, 2, 2),
-        }),
+        derived_event(
+            derived,
+            OperationCode::Add,
+            HandleType::Suint256,
+            vec![a],
+            chain_event_ref(1, 2, 2),
+        ),
     );
 
     assert_eq!(
@@ -169,7 +165,9 @@ fn resolve_handle_for_unknown_key_does_not_create_handle_record() {
     let _ = host.resolve_handle(&unknown);
 
     assert!(
-        host.handle_graph_core().canonical_handle(&unknown).is_none(),
+        host.handle_graph_core()
+            .canonical_handle(&unknown)
+            .is_none(),
         "Resolve must not create a placeholder Canonical Handle Record"
     );
     assert!(
@@ -187,50 +185,37 @@ fn resolve_handle_does_not_change_handle_graph_state_for_known_records() {
     let pending_derived = handle_key(1, 7, 10);
     ingest(
         &mut host,
-        ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
-            domain_id: DomainId([DEFAULT_DOMAIN; 32]),
-            handle_key: pending_derived,
-            operation_code: OperationCode::Add,
-            output_handle_type: HandleType::Suint256,
-            input_handle_keys: vec![a, b],
-            event_ref: chain_event_ref(1, 2, 1),
-        }),
+        derived_event(
+            pending_derived,
+            OperationCode::Add,
+            HandleType::Suint256,
+            vec![a, b],
+            chain_event_ref(1, 2, 1),
+        ),
     );
     let failed_derived = handle_key(1, 7, 11);
     ingest(
         &mut host,
-        ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
-            domain_id: DomainId([DEFAULT_DOMAIN; 32]),
-            handle_key: failed_derived,
-            operation_code: OperationCode::Add,
-            output_handle_type: HandleType::Suint256,
-            input_handle_keys: vec![a],
-            event_ref: chain_event_ref(1, 2, 2),
-        }),
+        derived_event(
+            failed_derived,
+            OperationCode::Add,
+            HandleType::Suint256,
+            vec![a],
+            chain_event_ref(1, 2, 2),
+        ),
     );
     let unknown = handle_key(1, 7, 99);
+    let observed_keys = [a, b, pending_derived, failed_derived, unknown];
 
-    let snapshot_before = [
-        host.get_handle_state(&a),
-        host.get_handle_state(&b),
-        host.get_handle_state(&pending_derived),
-        host.get_handle_state(&failed_derived),
-        host.get_handle_state(&unknown),
-    ];
+    let snapshot_before = handle_state_snapshot(&host, &observed_keys);
     let readiness_before = host.handle_graph_core().resolution_readiness();
 
-    for key in [&a, &b, &pending_derived, &failed_derived, &unknown] {
+    for key in &observed_keys {
         let _ = host.resolve_handle(key);
         let _ = host.resolve_handle(key);
     }
 
-    let snapshot_after = [
-        host.get_handle_state(&a),
-        host.get_handle_state(&b),
-        host.get_handle_state(&pending_derived),
-        host.get_handle_state(&failed_derived),
-        host.get_handle_state(&unknown),
-    ];
+    let snapshot_after = handle_state_snapshot(&host, &observed_keys);
     let readiness_after = host.handle_graph_core().resolution_readiness();
 
     assert_eq!(
@@ -250,14 +235,13 @@ fn resolve_handle_matches_get_handle_state_across_known_and_unknown_keys() {
     let derived = handle_key(1, 7, 10);
     ingest(
         &mut host,
-        ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
-            domain_id: DomainId([DEFAULT_DOMAIN; 32]),
-            handle_key: derived,
-            operation_code: OperationCode::Add,
-            output_handle_type: HandleType::Suint256,
-            input_handle_keys: vec![a, b],
-            event_ref: chain_event_ref(1, 2, 1),
-        }),
+        derived_event(
+            derived,
+            OperationCode::Add,
+            HandleType::Suint256,
+            vec![a, b],
+            chain_event_ref(1, 2, 1),
+        ),
     );
     let unknown = handle_key(1, 7, 99);
 
@@ -301,15 +285,58 @@ fn seed_imported(
 ) {
     ingest(
         host,
-        ChainEvent::ImportedHandle(ImportedHandle {
-            domain_id: DomainId([DEFAULT_DOMAIN; 32]),
+        imported_event(
             handle_key,
             handle_type,
-            system_ciphertext: SystemCiphertextV1(vec![0x01]),
-            materialization_receipt: MaterializationReceipt(vec![0x02]),
+            SystemCiphertextV1(vec![0x01]),
+            MaterializationReceipt(vec![0x02]),
             event_ref,
-        }),
+        ),
     );
+}
+
+fn imported_event(
+    handle_key: HandleKey,
+    handle_type: HandleType,
+    system_ciphertext: SystemCiphertextV1,
+    materialization_receipt: MaterializationReceipt,
+    event_ref: ChainEventRef,
+) -> ChainEvent {
+    ChainEvent::ImportedHandle(ImportedHandle {
+        domain_id: DomainId([DEFAULT_DOMAIN; 32]),
+        handle_key,
+        handle_type,
+        system_ciphertext,
+        materialization_receipt,
+        event_ref,
+    })
+}
+
+fn derived_event(
+    handle_key: HandleKey,
+    operation_code: OperationCode,
+    output_handle_type: HandleType,
+    input_handle_keys: Vec<HandleKey>,
+    event_ref: ChainEventRef,
+) -> ChainEvent {
+    ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
+        domain_id: DomainId([DEFAULT_DOMAIN; 32]),
+        handle_key,
+        operation_code,
+        output_handle_type,
+        input_handle_keys,
+        event_ref,
+    })
+}
+
+fn handle_state_snapshot(
+    host: &CoprocessorHost,
+    handle_keys: &[HandleKey],
+) -> Vec<HandleStateView> {
+    handle_keys
+        .iter()
+        .map(|handle_key| host.get_handle_state(handle_key))
+        .collect()
 }
 
 fn handle_key(chain_id: u64, contract_seed: u8, handle_seed: u8) -> HandleKey {
