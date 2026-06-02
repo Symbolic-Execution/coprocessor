@@ -384,7 +384,7 @@ fn decode_reader_body(reader: &mut Reader, version: u8) -> Result<ReaderAadV1, A
 // ---------------------------------------------------------------------------
 
 struct Prefix {
-    array_len: u64,
+    array_len: usize,
     version: u8,
     kind: AadKind,
 }
@@ -406,20 +406,24 @@ fn decode_with_prefix<T>(
 }
 
 fn decode_prefix(reader: &mut Reader) -> Result<Prefix, AadDecodeError> {
-    let (major, array_len) = reader.read_header()?;
-    if major != MAJOR_ARRAY {
+    let array_header = reader.read_header()?;
+    if array_header.major != MAJOR_ARRAY {
         return Err(AadDecodeError::Malformed);
     }
-    let (vmajor, varg) = reader.read_header()?;
-    if vmajor != MAJOR_UINT {
+    let array_len =
+        usize::try_from(array_header.argument).map_err(|_| AadDecodeError::Malformed)?;
+    let version_header = reader.read_header()?;
+    if version_header.major != MAJOR_UINT {
         return Err(AadDecodeError::Malformed);
     }
-    let version = u8::try_from(varg).map_err(|_| AadDecodeError::VersionOverflow(varg))?;
-    let (kmajor, karg) = reader.read_header()?;
-    if kmajor != MAJOR_UINT {
+    let version = u8::try_from(version_header.argument)
+        .map_err(|_| AadDecodeError::VersionOverflow(version_header.argument))?;
+    let kind_header = reader.read_header()?;
+    if kind_header.major != MAJOR_UINT {
         return Err(AadDecodeError::Malformed);
     }
-    let kind = AadKind::from_discriminant(karg).ok_or(AadDecodeError::UnknownKind(karg))?;
+    let kind = AadKind::from_discriminant(kind_header.argument)
+        .ok_or(AadDecodeError::UnknownKind(kind_header.argument))?;
     Ok(Prefix {
         array_len,
         version,
@@ -435,16 +439,17 @@ fn require_kind(expected: AadKind, actual: AadKind) -> Result<(), AadDecodeError
     }
 }
 
-fn check_array_length(kind: AadKind, array_len: u64) -> Result<(), AadDecodeError> {
+fn check_array_length(kind: AadKind, actual: usize) -> Result<(), AadDecodeError> {
     let expected = kind.array_length();
-    if array_len as usize != expected {
-        return Err(AadDecodeError::WrongLength {
+    if actual != expected {
+        Err(AadDecodeError::WrongLength {
             kind,
             expected,
-            actual: array_len as usize,
-        });
+            actual,
+        })
+    } else {
+        Ok(())
     }
-    Ok(())
 }
 
 fn ensure_consumed(reader: &Reader) -> Result<(), AadDecodeError> {
@@ -464,15 +469,15 @@ fn read_uint_field(
     kind: AadKind,
     field: &'static str,
 ) -> Result<u64, AadDecodeError> {
-    let (major, arg) = reader.read_header()?;
-    if major != MAJOR_UINT {
+    let header = reader.read_header()?;
+    if header.major != MAJOR_UINT {
         return Err(AadDecodeError::WrongFieldType {
             kind,
             field,
             expected: "unsigned integer",
         });
     }
-    Ok(arg)
+    Ok(header.argument)
 }
 
 fn read_fixed_bytes<const N: usize>(
@@ -480,15 +485,15 @@ fn read_fixed_bytes<const N: usize>(
     kind: AadKind,
     field: &'static str,
 ) -> Result<[u8; N], AadDecodeError> {
-    let (major, arg) = reader.read_header()?;
-    if major != MAJOR_BYTE_STRING {
+    let header = reader.read_header()?;
+    if header.major != MAJOR_BYTE_STRING {
         return Err(AadDecodeError::WrongFieldType {
             kind,
             field,
             expected: "byte string",
         });
     }
-    let actual = usize::try_from(arg).map_err(|_| AadDecodeError::Malformed)?;
+    let actual = usize::try_from(header.argument).map_err(|_| AadDecodeError::Malformed)?;
     if actual != N {
         return Err(AadDecodeError::WrongByteStringLength {
             kind,
@@ -508,15 +513,15 @@ fn read_text_string(
     kind: AadKind,
     field: &'static str,
 ) -> Result<String, AadDecodeError> {
-    let (major, arg) = reader.read_header()?;
-    if major != MAJOR_TEXT_STRING {
+    let header = reader.read_header()?;
+    if header.major != MAJOR_TEXT_STRING {
         return Err(AadDecodeError::WrongFieldType {
             kind,
             field,
             expected: "text string",
         });
     }
-    let len = usize::try_from(arg).map_err(|_| AadDecodeError::Malformed)?;
+    let len = usize::try_from(header.argument).map_err(|_| AadDecodeError::Malformed)?;
     let payload = reader.take(len).ok_or(AadDecodeError::Malformed)?;
     let text =
         std::str::from_utf8(payload).map_err(|_| AadDecodeError::InvalidUtf8 { kind, field })?;
@@ -531,6 +536,12 @@ const MAJOR_UINT: u8 = 0;
 const MAJOR_BYTE_STRING: u8 = 2;
 const MAJOR_TEXT_STRING: u8 = 3;
 const MAJOR_ARRAY: u8 = 4;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CborHeader {
+    major: u8,
+    argument: u64,
+}
 
 fn write_aad_prefix(out: &mut Vec<u8>, kind: AadKind, version: u8) {
     write_array_header(out, kind.array_length());
@@ -604,7 +615,7 @@ impl<'a> Reader<'a> {
         Some(slice)
     }
 
-    fn read_header(&mut self) -> Result<(u8, u64), AadDecodeError> {
+    fn read_header(&mut self) -> Result<CborHeader, AadDecodeError> {
         let initial = self.read_byte().ok_or(AadDecodeError::Malformed)?;
         let major = initial >> 5;
         let info = initial & 0x1f;
@@ -634,6 +645,9 @@ impl<'a> Reader<'a> {
         if arg < min_value {
             return Err(AadDecodeError::NonCanonicalEncoding);
         }
-        Ok((major, arg))
+        Ok(CborHeader {
+            major,
+            argument: arg,
+        })
     }
 }
