@@ -17,7 +17,7 @@
 //! attestation checks. Production sources will implement [`ChainEventSource`]
 //! against a real chain client; tests substitute a fake.
 
-use coprocessor_handle_graph_core::{ChainEvent, IngestionOutcome};
+use coprocessor_handle_graph_core::{ChainEvent, ChainEventRef, IngestionOutcome};
 
 use crate::CoprocessorHost;
 
@@ -65,6 +65,16 @@ pub struct IngestionReport {
     pub duplicates_rejected: usize,
 }
 
+impl IngestionReport {
+    fn record_outcome(&mut self, outcome: IngestionOutcome) {
+        match outcome {
+            IngestionOutcome::Recorded(_) => self.recorded += 1,
+            IngestionOutcome::Idempotent => self.idempotent += 1,
+            IngestionOutcome::DuplicateHandleKeyRejected(_) => self.duplicates_rejected += 1,
+        }
+    }
+}
+
 impl CoprocessorHost {
     /// Drive a single Chain Event Ingestion pass: poll `source` at the host's
     /// configured [`ChainView`], canonically order the returned events, and
@@ -80,11 +90,8 @@ impl CoprocessorHost {
 
         let mut report = IngestionReport::default();
         for event in events {
-            match self.handle_graph_core_mut().apply_chain_event(event) {
-                IngestionOutcome::Recorded(_) => report.recorded += 1,
-                IngestionOutcome::Idempotent => report.idempotent += 1,
-                IngestionOutcome::DuplicateHandleKeyRejected(_) => report.duplicates_rejected += 1,
-            }
+            let outcome = self.handle_graph_core_mut().apply_chain_event(event);
+            report.record_outcome(outcome);
         }
         report
     }
@@ -95,13 +102,19 @@ impl CoprocessorHost {
 /// transaction order, so this key is the canonical confirmation order even
 /// across multiple transactions in the same block.
 fn sort_canonical(events: &mut [ChainEvent]) {
-    events.sort_by_key(|event| {
-        let r = event_ref(event);
-        (r.chain_id.0, r.block_number, r.log_index)
-    });
+    events.sort_by_key(canonical_sort_key);
 }
 
-fn event_ref(event: &ChainEvent) -> coprocessor_handle_graph_core::ChainEventRef {
+fn canonical_sort_key(event: &ChainEvent) -> (u64, u64, u32) {
+    let event_ref = chain_event_ref(event);
+    (
+        event_ref.chain_id.0,
+        event_ref.block_number,
+        event_ref.log_index,
+    )
+}
+
+fn chain_event_ref(event: &ChainEvent) -> ChainEventRef {
     match event {
         ChainEvent::ImportedHandle(e) => e.event_ref,
         ChainEvent::PlaintextHandle(e) => e.event_ref,
