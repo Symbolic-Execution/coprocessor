@@ -13,7 +13,11 @@
 
 use std::collections::BTreeSet;
 
-use coprocessor_handle_graph_core::HandleGraphCore;
+use coprocessor_handle_graph_core::{HandleGraphCore, HandleKey};
+
+mod internal_api;
+
+pub use internal_api::{HandleStateFailureCategory, HandleStateView};
 
 mod chain_ingestion;
 
@@ -221,6 +225,18 @@ impl CoprocessorHost {
     /// Read-only access to the loaded configuration.
     pub fn config(&self) -> &HostConfig {
         &self.config
+    }
+
+    /// Internal Coordinator API: GET Handle State.
+    ///
+    /// Returns the Coordinator-facing [`HandleStateView`] for `handle_key`.
+    /// Unknown Handle Keys and tombstoned Handle Records both resolve to
+    /// [`HandleStateView::Unknown`]; known Canonical Handle Records project to
+    /// `Pending`, `Ready { .. }`, or `Failed { category }` according to their
+    /// Handle State. Lifecycle does not gate this read — callers that need
+    /// the host to be Running must check [`Self::readiness`] first.
+    pub fn get_handle_state(&self, handle_key: &HandleKey) -> HandleStateView {
+        internal_api::project_canonical(self.handle_graph_core.canonical_handle(handle_key))
     }
 
     fn unavailable_dependencies(&self) -> Vec<DependencyName> {
