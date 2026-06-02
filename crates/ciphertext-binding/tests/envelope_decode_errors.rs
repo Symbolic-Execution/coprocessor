@@ -1,94 +1,19 @@
 //! Decoder error coverage for ciphertext envelopes: wrong array length, wrong
 //! field type, malformed payloads, version overflow, trailing bytes, and AAD
 //! binding mismatches must surface as non-secret domain errors that name only
-//! the envelope kind and field — never the opaque payload bytes.
+//! the envelope kind and field - never the opaque payload bytes.
 
 use coprocessor_ciphertext_binding::{
-    AadKind, AttestationDigest, ContractAddress, DomainId, EnclaveAadV1, EnclaveCiphertextV1,
-    EnvelopeDecodeError, EnvelopeKind, HandleId, KeyId, ReaderAadV1, ReaderCiphertextV1, ReaderId,
-    RequestId, SystemCiphertextV1, SystemHandleAadV1, SystemInputAadV1,
+    AadKind, EnclaveCiphertextV1, EnvelopeDecodeError, EnvelopeKind, ReaderCiphertextV1,
+    SystemCiphertextV1,
 };
 
-const DIRECT_ARRAY_HEADER: u8 = 0x80;
+mod common;
 
-fn fill(byte: u8) -> [u8; 32] {
-    [byte; 32]
-}
-
-fn sample_system_input_aad() -> SystemInputAadV1 {
-    SystemInputAadV1 {
-        version: 1,
-        chain_id: 1,
-        domain_id: DomainId(fill(0xA1)),
-        contract: ContractAddress([0xC2; 20]),
-        type_tag: "suint256".to_string(),
-        key_id: KeyId(fill(0x10)),
-    }
-}
-
-fn sample_system_handle_aad() -> SystemHandleAadV1 {
-    SystemHandleAadV1 {
-        version: 1,
-        chain_id: 1,
-        domain_id: DomainId(fill(0xA1)),
-        handle_id: HandleId(fill(0xB3)),
-        type_tag: "sbool".to_string(),
-        key_id: KeyId(fill(0x10)),
-    }
-}
-
-fn sample_enclave_aad() -> EnclaveAadV1 {
-    EnclaveAadV1 {
-        version: 1,
-        chain_id: 1,
-        domain_id: DomainId(fill(0xA1)),
-        request_id: RequestId(fill(0x70)),
-        handle_id: HandleId(fill(0xB3)),
-        type_tag: "suint256".to_string(),
-        attestation_digest: AttestationDigest(fill(0xEE)),
-        key_id: KeyId(fill(0x10)),
-    }
-}
-
-fn sample_reader_aad() -> ReaderAadV1 {
-    ReaderAadV1 {
-        version: 1,
-        chain_id: 1,
-        domain_id: DomainId(fill(0xA1)),
-        request_id: RequestId(fill(0x70)),
-        handle_id: HandleId(fill(0xB3)),
-        reader_id: ReaderId(fill(0x40)),
-        type_tag: "sbool".to_string(),
-        key_id: KeyId(fill(0x10)),
-    }
-}
-
-fn sample_system_envelope() -> SystemCiphertextV1 {
-    SystemCiphertextV1 {
-        version: 1,
-        aad: sample_system_input_aad().encode(),
-        wrapped_key: vec![0x01, 0x02, 0x03],
-        ciphertext: vec![0xAA, 0xBB, 0xCC],
-    }
-}
-
-fn sample_enclave_envelope() -> EnclaveCiphertextV1 {
-    EnclaveCiphertextV1 {
-        version: 1,
-        aad: sample_enclave_aad().encode(),
-        wrapped_key: vec![0x01, 0x02, 0x03],
-        ciphertext: vec![0xAA, 0xBB, 0xCC],
-    }
-}
-
-fn sample_reader_envelope() -> ReaderCiphertextV1 {
-    ReaderCiphertextV1 {
-        version: 1,
-        aad: sample_reader_aad().encode(),
-        wrapped_key: vec![0x01, 0x02, 0x03],
-        ciphertext: vec![0xAA, 0xBB, 0xCC],
-    }
-}
+use common::{
+    sample_enclave_aad, sample_enclave_envelope, sample_reader_aad, sample_reader_envelope,
+    sample_system_envelope, sample_system_handle_aad, DIRECT_ARRAY_HEADER,
+};
 
 #[test]
 fn empty_input_is_rejected_as_malformed_for_each_envelope() {
@@ -114,7 +39,7 @@ fn empty_input_is_rejected_as_malformed_for_each_envelope() {
 
 #[test]
 fn non_array_top_level_is_rejected() {
-    // CBOR uint(1) at top-level — major type 0, not 4.
+    // CBOR uint(1) at top-level: major type 0, not 4.
     let bytes = vec![0x01];
     let err = SystemCiphertextV1::decode(&bytes).unwrap_err();
     assert_eq!(
@@ -190,15 +115,7 @@ fn version_field_must_be_unsigned_integer() {
 fn version_overflow_when_value_exceeds_u8_is_rejected() {
     // Hand-build a System envelope with version = 256 (overflows u8).
     // [arr(4), uint(256), bstr(empty), bstr(empty), bstr(empty)]
-    let bytes = vec![
-        DIRECT_ARRAY_HEADER | 4,
-        0x19,
-        0x01,
-        0x00,
-        0x40,
-        0x40,
-        0x40,
-    ];
+    let bytes = vec![DIRECT_ARRAY_HEADER | 4, 0x19, 0x01, 0x00, 0x40, 0x40, 0x40];
     let err = SystemCiphertextV1::decode(&bytes).unwrap_err();
     assert_eq!(
         err,

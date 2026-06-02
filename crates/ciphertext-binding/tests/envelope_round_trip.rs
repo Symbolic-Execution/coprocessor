@@ -3,63 +3,13 @@
 //! exact same domain value and validates that the embedded AAD bytes bind to
 //! a matching `AadKind` for the envelope.
 
-use coprocessor_ciphertext_binding::{
-    AttestationDigest, ContractAddress, DomainId, EnclaveAadV1, EnclaveCiphertextV1, HandleId,
-    KeyId, ReaderAadV1, ReaderCiphertextV1, ReaderId, RequestId, SystemCiphertextV1,
-    SystemHandleAadV1, SystemInputAadV1,
+use coprocessor_ciphertext_binding::{EnclaveCiphertextV1, ReaderCiphertextV1, SystemCiphertextV1};
+
+mod common;
+
+use common::{
+    sample_enclave_aad, sample_reader_aad, sample_system_handle_aad, sample_system_input_aad,
 };
-
-fn fill(byte: u8) -> [u8; 32] {
-    [byte; 32]
-}
-
-fn sample_system_input_aad() -> SystemInputAadV1 {
-    SystemInputAadV1 {
-        version: 1,
-        chain_id: 11155111,
-        domain_id: DomainId(fill(0xAA)),
-        contract: ContractAddress([0xCC; 20]),
-        type_tag: "suint256".to_string(),
-        key_id: KeyId(fill(0x11)),
-    }
-}
-
-fn sample_system_handle_aad() -> SystemHandleAadV1 {
-    SystemHandleAadV1 {
-        version: 1,
-        chain_id: 11155111,
-        domain_id: DomainId(fill(0xAA)),
-        handle_id: HandleId(fill(0xBB)),
-        type_tag: "sbool".to_string(),
-        key_id: KeyId(fill(0x11)),
-    }
-}
-
-fn sample_enclave_aad() -> EnclaveAadV1 {
-    EnclaveAadV1 {
-        version: 1,
-        chain_id: 11155111,
-        domain_id: DomainId(fill(0xAA)),
-        request_id: RequestId(fill(0x77)),
-        handle_id: HandleId(fill(0xBB)),
-        type_tag: "suint256".to_string(),
-        attestation_digest: AttestationDigest(fill(0xEE)),
-        key_id: KeyId(fill(0x11)),
-    }
-}
-
-fn sample_reader_aad() -> ReaderAadV1 {
-    ReaderAadV1 {
-        version: 1,
-        chain_id: 11155111,
-        domain_id: DomainId(fill(0xAA)),
-        request_id: RequestId(fill(0x77)),
-        handle_id: HandleId(fill(0xBB)),
-        reader_id: ReaderId(fill(0x44)),
-        type_tag: "sbool".to_string(),
-        key_id: KeyId(fill(0x11)),
-    }
-}
 
 #[test]
 fn system_ciphertext_round_trip_with_system_input_aad_preserves_every_field() {
