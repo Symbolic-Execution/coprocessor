@@ -233,9 +233,26 @@ impl CoprocessorHost {
     /// Unknown Handle Keys and tombstoned Handle Records both resolve to
     /// [`HandleStateView::Unknown`]; known Canonical Handle Records project to
     /// `Pending`, `Ready { .. }`, or `Failed { category }` according to their
-    /// Handle State. Lifecycle does not gate this read — callers that need
+    /// Handle State. Lifecycle does not gate this read; callers that need
     /// the host to be Running must check [`Self::readiness`] first.
     pub fn get_handle_state(&self, handle_key: &HandleKey) -> HandleStateView {
+        self.project_handle_state(handle_key)
+    }
+
+    /// Internal Coordinator API: Resolve Handle Request, current-state slice.
+    ///
+    /// Returns the same [`HandleStateView`] projection as
+    /// [`Self::get_handle_state`] for already-known Canonical Handle Records.
+    /// This slice intentionally performs no Resolution Scheduler work and
+    /// creates no Handle Records: Chain Event Ingestion is the only source of
+    /// Handle Records, so an unknown or tombstoned Handle Key returns
+    /// [`HandleStateView::Unknown`] without leaving any placeholder behind.
+    /// The call therefore cannot move Handle Graph state by itself.
+    pub fn resolve_handle(&self, handle_key: &HandleKey) -> HandleStateView {
+        self.project_handle_state(handle_key)
+    }
+
+    fn project_handle_state(&self, handle_key: &HandleKey) -> HandleStateView {
         internal_api::project_canonical(self.handle_graph_core.canonical_handle(handle_key))
     }
 
