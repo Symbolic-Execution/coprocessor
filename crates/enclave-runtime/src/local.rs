@@ -16,8 +16,8 @@
 //! and authenticated encryption.
 
 use coprocessor_ciphertext_binding::{
-    AadDecodeError, AttestationDigest, DomainId, EnclaveAadV1, EnclaveCiphertextV1,
-    HandleId as AadHandleId, KeyId, RequestId, SystemCiphertextV1, SystemHandleAadV1,
+    AttestationDigest, DomainId, EnclaveAadV1, EnclaveCiphertextV1, HandleId as AadHandleId, KeyId,
+    RequestId, SystemCiphertextV1, SystemHandleAadV1,
 };
 use coprocessor_handle_graph_core::{HandleKey, HandleType, OperationCode};
 
@@ -114,21 +114,19 @@ impl LocalEnclaveRuntime {
     ) -> EnclaveCiphertextV1 {
         let aad = self.build_enclave_aad(request_id, input_handle_key);
         let aad_bytes = aad.encode();
-        let keystream = derive_keystream_32(&self.config.sealing_secret, &aad_bytes);
-        let wrapped_key = derive_wrapped_key(&self.config.sealing_secret, &aad_bytes);
-        let ciphertext = xor32(&plaintext, &keystream).to_vec();
+        let sealed = seal_payload(&self.config.sealing_secret, &aad_bytes, plaintext);
         EnclaveCiphertextV1 {
             version: ENVELOPE_VERSION,
             aad: aad_bytes,
-            wrapped_key,
-            ciphertext,
+            wrapped_key: sealed.wrapped_key,
+            ciphertext: sealed.ciphertext,
         }
     }
 
     /// Test-only helper: unseal a [`SystemCiphertextV1`] produced by
     /// [`EnclaveRuntime::execute`]. Returns `None` if the envelope does not
-    /// belong to this runtime (wrong AAD shape, wrong key id, or tampered
-    /// ciphertext bytes). Test fixtures use this to verify the operation
+    /// belong to this runtime (wrong AAD shape, wrong key id, or wrong
+    /// ciphertext length). Test fixtures use this to verify the operation
     /// result without leaking plaintext to host-facing assertions.
     pub fn unseal_suint256_output(&self, ciphertext: &SystemCiphertextV1) -> Option<[u8; 32]> {
         let aad = SystemHandleAadV1::decode(&ciphertext.aad).ok()?;
@@ -140,13 +138,11 @@ impl LocalEnclaveRuntime {
         {
             return None;
         }
-        if ciphertext.ciphertext.len() != 32 {
-            return None;
-        }
-        let keystream = derive_keystream_32(&self.config.sealing_secret, &ciphertext.aad);
-        let mut payload = [0u8; 32];
-        payload.copy_from_slice(&ciphertext.ciphertext);
-        Some(xor32(&payload, &keystream))
+        unseal_payload(
+            &self.config.sealing_secret,
+            &ciphertext.aad,
+            &ciphertext.ciphertext,
+        )
     }
 
     fn build_enclave_aad(
@@ -183,9 +179,9 @@ impl LocalEnclaveRuntime {
         input_index: usize,
         input_handle_key: &HandleKey,
         ciphertext: &EnclaveCiphertextV1,
-    ) -> Result<EnclaveAadV1, EnclaveExecutionError> {
+    ) -> Result<(), EnclaveExecutionError> {
         let aad = EnclaveAadV1::decode(&ciphertext.aad)
-            .map_err(|_: AadDecodeError| input_aad_error(input_index, InputAadField::Decode))?;
+            .map_err(|_| input_aad_error(input_index, InputAadField::Decode))?;
         if aad.version != AAD_VERSION {
             return Err(input_aad_error(input_index, InputAadField::Version));
         }
@@ -213,17 +209,15 @@ impl LocalEnclaveRuntime {
         if aad.key_id != self.config.enclave_key_id {
             return Err(input_aad_error(input_index, InputAadField::KeyId));
         }
-        Ok(aad)
+        Ok(())
     }
 
     fn unseal_input(&self, ciphertext: &EnclaveCiphertextV1) -> Option<[u8; 32]> {
-        if ciphertext.ciphertext.len() != 32 {
-            return None;
-        }
-        let keystream = derive_keystream_32(&self.config.sealing_secret, &ciphertext.aad);
-        let mut payload = [0u8; 32];
-        payload.copy_from_slice(&ciphertext.ciphertext);
-        Some(xor32(&payload, &keystream))
+        unseal_payload(
+            &self.config.sealing_secret,
+            &ciphertext.aad,
+            &ciphertext.ciphertext,
+        )
     }
 
     fn seal_output(&self, task: &ResolutionTask, plaintext: [u8; 32]) -> SystemCiphertextV1 {
@@ -236,14 +230,12 @@ impl LocalEnclaveRuntime {
             key_id: self.config.system_key_id,
         };
         let aad_bytes = aad.encode();
-        let keystream = derive_keystream_32(&self.config.sealing_secret, &aad_bytes);
-        let wrapped_key = derive_wrapped_key(&self.config.sealing_secret, &aad_bytes);
-        let ciphertext = xor32(&plaintext, &keystream).to_vec();
+        let sealed = seal_payload(&self.config.sealing_secret, &aad_bytes, plaintext);
         SystemCiphertextV1 {
             version: ENVELOPE_VERSION,
             aad: aad_bytes,
-            wrapped_key,
-            ciphertext,
+            wrapped_key: sealed.wrapped_key,
+            ciphertext: sealed.ciphertext,
         }
     }
 }
@@ -293,6 +285,25 @@ impl EnclaveRuntime for LocalEnclaveRuntime {
 
 fn input_aad_error(input_index: usize, field: InputAadField) -> EnclaveExecutionError {
     EnclaveExecutionError::InputAadVerificationFailed { input_index, field }
+}
+
+struct SealedPayload {
+    wrapped_key: Vec<u8>,
+    ciphertext: Vec<u8>,
+}
+
+fn seal_payload(secret: &[u8; 32], aad: &[u8], plaintext: [u8; 32]) -> SealedPayload {
+    let keystream = derive_keystream_32(secret, aad);
+    SealedPayload {
+        wrapped_key: derive_wrapped_key(secret, aad),
+        ciphertext: xor32(&plaintext, &keystream).to_vec(),
+    }
+}
+
+fn unseal_payload(secret: &[u8; 32], aad: &[u8], ciphertext: &[u8]) -> Option<[u8; 32]> {
+    let payload: [u8; 32] = ciphertext.try_into().ok()?;
+    let keystream = derive_keystream_32(secret, aad);
+    Some(xor32(&payload, &keystream))
 }
 
 /// Operations the local Enclave evaluates. The local Enclave intentionally
