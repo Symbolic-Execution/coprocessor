@@ -1,5 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
+pub mod persistence;
+
+pub use persistence::{HandlePersistence, InMemoryHandlePersistence};
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ChainId(pub u64);
 
@@ -212,6 +216,55 @@ impl HandleGraphCore {
         }
     }
 
+    /// Applies a Chain Event and mirrors the resulting durable state into
+    /// `persistence`. Returns the same [`IngestionOutcome`] as
+    /// [`HandleGraphCore::apply_chain_event`].
+    ///
+    /// Persistence ordering: when a canonical record is created, the record is
+    /// written first, then the Chain Event is marked consumed. A crash between
+    /// the two leaves the next restart with the record present and the event
+    /// not-yet-consumed; the next replay of the same event surfaces
+    /// [`IngestionOutcome::DuplicateHandleKeyRejected`] for the second attempt,
+    /// preserving the first canonical record. A canonical rejected duplicate
+    /// is intentionally not persisted — only the consumed event ref is — so
+    /// the store reflects exactly the records the Handle Graph retains.
+    pub fn apply_chain_event_with_persistence<P: HandlePersistence>(
+        &mut self,
+        event: ChainEvent,
+        persistence: &mut P,
+    ) -> IngestionOutcome {
+        let outcome = self.apply_chain_event(event);
+        match &outcome {
+            IngestionOutcome::Recorded(record) => {
+                persistence.put_handle_record(record.clone());
+                persistence.record_consumed_event(record.event_ref);
+            }
+            IngestionOutcome::DuplicateHandleKeyRejected(rejected) => {
+                persistence.record_consumed_event(rejected.event_ref);
+            }
+            IngestionOutcome::Idempotent => {}
+        }
+        outcome
+    }
+
+    /// Rebuilds a [`HandleGraphCore`] from a previously written
+    /// [`HandlePersistence`]. After restart this is the entry point that
+    /// re-seeds the in-process record map and the consumed-event set, so
+    /// ingestion replay remains idempotent by [`ChainEventRef`] and canonical
+    /// reads return the same Handle Records observed before the restart.
+    pub fn restore_from_persistence<P: HandlePersistence>(persistence: &P) -> Self {
+        let mut records = HashMap::new();
+        for record in persistence.handle_records() {
+            records.insert(record.handle_key, record);
+        }
+        let consumed_events: HashSet<ChainEventRef> =
+            persistence.consumed_events().into_iter().collect();
+        Self {
+            records,
+            consumed_events,
+        }
+    }
+
     /// Returns the canonical Handle Record for `handle_key`. Tombstoned
     /// records (see [`HandleGraphCore::apply_orphan_discard`]) are hidden from
     /// this query and appear unknown to normal API behavior.
@@ -274,6 +327,33 @@ impl HandleGraphCore {
             directly_tombstoned,
             cascade_tombstoned,
         }
+    }
+
+    /// Applies an Orphan Discard and mirrors every flipped Handle Record into
+    /// `persistence`. Returns the same [`OrphanDiscardOutcome`] as
+    /// [`HandleGraphCore::apply_orphan_discard`].
+    ///
+    /// The tombstone flag is the only field that changes during Orphan
+    /// Discard, but the whole record is re-put so the persistence backend
+    /// does not need a separate "update flag" operation. Cascade-tombstoned
+    /// records are written in addition to directly-tombstoned ones so a
+    /// restart restores the full cascade rather than the discard root only.
+    pub fn apply_orphan_discard_with_persistence<P: HandlePersistence>(
+        &mut self,
+        orphaned_event_refs: &[ChainEventRef],
+        persistence: &mut P,
+    ) -> OrphanDiscardOutcome {
+        let outcome = self.apply_orphan_discard(orphaned_event_refs);
+        for key in outcome
+            .directly_tombstoned
+            .iter()
+            .chain(outcome.cascade_tombstoned.iter())
+        {
+            if let Some(record) = self.records.get(key) {
+                persistence.put_handle_record(record.clone());
+            }
+        }
+        outcome
     }
 
     /// Marks every record in `keys` as tombstoned. Keys with no matching
