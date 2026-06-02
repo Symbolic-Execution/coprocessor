@@ -1,15 +1,10 @@
 //! Chain Event Ingestion for the Coprocessor Host.
 //!
-//! Wires the host to a [`ChainEventSource`] — the seam that pulls decoded
-//! Chain Events from the `symVM` Event Surface at a chosen [`ChainView`] — and
-//! drives a single ingestion pass:
+//! This module owns the pull boundary between the host and a decoded `symVM`
+//! Event Surface source. A single ingestion pass:
 //!
 //! 1. Poll the source at the host's configured Chain View.
-//! 2. Sort the returned events into canonical log order:
-//!    `(chain_id, block_number, log_index)`. EVM log indices are unique within
-//!    a block and increase with transaction order, so this sort is the
-//!    canonical confirmation order even across multiple transactions in the
-//!    same block.
+//! 2. Sort the returned events into canonical log order.
 //! 3. Apply each event to the owned [`HandleGraphCore`]. The core dedupes by
 //!    [`ChainEventRef`], so re-polling an already-consumed event is a no-op.
 //!
@@ -66,7 +61,7 @@ pub struct IngestionReport {
 }
 
 impl IngestionReport {
-    fn record_outcome(&mut self, outcome: IngestionOutcome) {
+    fn count_outcome(&mut self, outcome: IngestionOutcome) {
         match outcome {
             IngestionOutcome::Recorded(_) => self.recorded += 1,
             IngestionOutcome::Idempotent => self.idempotent += 1,
@@ -86,12 +81,12 @@ impl CoprocessorHost {
     pub fn ingest_chain_events<S: ChainEventSource>(&mut self, source: &mut S) -> IngestionReport {
         let view = self.config().chain_view;
         let mut events = source.poll_events(view);
-        sort_canonical(&mut events);
+        sort_by_canonical_log_order(&mut events);
 
         let mut report = IngestionReport::default();
         for event in events {
             let outcome = self.handle_graph_core_mut().apply_chain_event(event);
-            report.record_outcome(outcome);
+            report.count_outcome(outcome);
         }
         report
     }
@@ -101,17 +96,18 @@ impl CoprocessorHost {
 /// log_index)`. EVM log indices are unique within a block and increase with
 /// transaction order, so this key is the canonical confirmation order even
 /// across multiple transactions in the same block.
-fn sort_canonical(events: &mut [ChainEvent]) {
-    events.sort_by_key(canonical_sort_key);
+fn sort_by_canonical_log_order(events: &mut [ChainEvent]) {
+    events.sort_by_key(canonical_log_order_key);
 }
 
-fn canonical_sort_key(event: &ChainEvent) -> (u64, u64, u32) {
-    let event_ref = chain_event_ref(event);
-    (
-        event_ref.chain_id.0,
-        event_ref.block_number,
-        event_ref.log_index,
-    )
+fn canonical_log_order_key(event: &ChainEvent) -> (u64, u64, u32) {
+    let ChainEventRef {
+        chain_id,
+        block_number,
+        log_index,
+        ..
+    } = chain_event_ref(event);
+    (chain_id.0, block_number, log_index)
 }
 
 fn chain_event_ref(event: &ChainEvent) -> ChainEventRef {
