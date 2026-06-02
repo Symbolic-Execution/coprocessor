@@ -22,12 +22,14 @@ use coprocessor_handle_graph_core::{
 };
 use coprocessor_host::{CoprocessorHost, HandleStateFailureCategory, HandleStateView, HostConfig};
 
+const DEFAULT_CHAIN: u64 = 1;
+const DEFAULT_CONTRACT_SEED: u8 = 7;
 const DEFAULT_DOMAIN: u8 = 9;
 
 #[test]
 fn resolve_handle_returns_unknown_for_unknown_handle_key() {
     let host = running_host();
-    let unknown = handle_key(1, 7, 99);
+    let unknown = default_handle_key(99);
 
     assert_eq!(host.resolve_handle(&unknown), HandleStateView::Unknown);
 }
@@ -35,37 +37,32 @@ fn resolve_handle_returns_unknown_for_unknown_handle_key() {
 #[test]
 fn resolve_handle_returns_ready_with_ciphertext_and_receipt_for_imported_handle() {
     let mut host = running_host();
-    let key = handle_key(1, 7, 1);
+    let key = default_handle_key(1);
     let ciphertext = SystemCiphertextV1(vec![0xAA, 0xBB, 0xCC]);
     let receipt = MaterializationReceipt(vec![0xDD, 0xEE]);
+    let expected = HandleStateView::Ready {
+        system_ciphertext: ciphertext.clone(),
+        materialization_receipt: receipt.clone(),
+    };
     ingest(
         &mut host,
         imported_event(
             key,
             HandleType::Suint256,
-            ciphertext.clone(),
-            receipt.clone(),
-            chain_event_ref(1, 1, 1),
+            ciphertext,
+            receipt,
+            default_event_ref(1, 1),
         ),
     );
 
-    match host.resolve_handle(&key) {
-        HandleStateView::Ready {
-            system_ciphertext,
-            materialization_receipt,
-        } => {
-            assert_eq!(system_ciphertext, ciphertext);
-            assert_eq!(materialization_receipt, receipt);
-        }
-        other => panic!("expected Ready view, got {other:?}"),
-    }
+    assert_eq!(host.resolve_handle(&key), expected);
 }
 
 #[test]
 fn resolve_handle_returns_pending_for_canonical_pending_derived_handle() {
     let mut host = running_host();
     let (a, b) = seed_suint_pair(&mut host);
-    let derived = handle_key(1, 7, 10);
+    let derived = default_handle_key(10);
     ingest(
         &mut host,
         derived_event(
@@ -73,7 +70,7 @@ fn resolve_handle_returns_pending_for_canonical_pending_derived_handle() {
             OperationCode::Add,
             HandleType::Suint256,
             vec![a, b],
-            chain_event_ref(1, 2, 1),
+            default_event_ref(2, 1),
         ),
     );
 
@@ -83,22 +80,22 @@ fn resolve_handle_returns_pending_for_canonical_pending_derived_handle() {
 #[test]
 fn resolve_handle_returns_failed_with_lineage_violation_category_for_unknown_input_handle() {
     let mut host = running_host();
-    let known = handle_key(1, 7, 1);
+    let known = default_handle_key(1);
     seed_imported(
         &mut host,
         known,
         HandleType::Suint256,
-        chain_event_ref(1, 1, 1),
+        default_event_ref(1, 1),
     );
-    let derived = handle_key(1, 7, 10);
+    let derived = default_handle_key(10);
     ingest(
         &mut host,
         derived_event(
             derived,
             OperationCode::Add,
             HandleType::Suint256,
-            vec![known, handle_key(1, 7, 77)],
-            chain_event_ref(1, 2, 1),
+            vec![known, default_handle_key(77)],
+            default_event_ref(2, 1),
         ),
     );
 
@@ -114,7 +111,7 @@ fn resolve_handle_returns_failed_with_lineage_violation_category_for_unknown_inp
 fn resolve_handle_returns_failed_with_operation_violation_category_for_wrong_arity() {
     let mut host = running_host();
     let (a, _) = seed_suint_pair(&mut host);
-    let derived = handle_key(1, 7, 11);
+    let derived = default_handle_key(11);
     ingest(
         &mut host,
         derived_event(
@@ -122,7 +119,7 @@ fn resolve_handle_returns_failed_with_operation_violation_category_for_wrong_ari
             OperationCode::Add,
             HandleType::Suint256,
             vec![a],
-            chain_event_ref(1, 2, 2),
+            default_event_ref(2, 2),
         ),
     );
 
@@ -137,8 +134,8 @@ fn resolve_handle_returns_failed_with_operation_violation_category_for_wrong_ari
 #[test]
 fn resolve_handle_returns_unknown_for_tombstoned_source_handle() {
     let mut host = running_host();
-    let key = handle_key(1, 7, 1);
-    let event_ref = chain_event_ref(1, 1, 1);
+    let key = default_handle_key(1);
+    let event_ref = default_event_ref(1, 1);
     seed_imported(&mut host, key, HandleType::Suint256, event_ref);
     assert!(matches!(
         host.resolve_handle(&key),
@@ -159,7 +156,7 @@ fn resolve_handle_returns_unknown_for_tombstoned_source_handle() {
 #[test]
 fn resolve_handle_for_unknown_key_does_not_create_handle_record() {
     let host = running_host();
-    let unknown = handle_key(1, 7, 99);
+    let unknown = default_handle_key(99);
 
     let _ = host.resolve_handle(&unknown);
     let _ = host.resolve_handle(&unknown);
@@ -182,7 +179,7 @@ fn resolve_handle_for_unknown_key_does_not_create_handle_record() {
 fn resolve_handle_does_not_change_handle_graph_state_for_known_records() {
     let mut host = running_host();
     let (a, b) = seed_suint_pair(&mut host);
-    let pending_derived = handle_key(1, 7, 10);
+    let pending_derived = default_handle_key(10);
     ingest(
         &mut host,
         derived_event(
@@ -190,10 +187,10 @@ fn resolve_handle_does_not_change_handle_graph_state_for_known_records() {
             OperationCode::Add,
             HandleType::Suint256,
             vec![a, b],
-            chain_event_ref(1, 2, 1),
+            default_event_ref(2, 1),
         ),
     );
-    let failed_derived = handle_key(1, 7, 11);
+    let failed_derived = default_handle_key(11);
     ingest(
         &mut host,
         derived_event(
@@ -201,10 +198,10 @@ fn resolve_handle_does_not_change_handle_graph_state_for_known_records() {
             OperationCode::Add,
             HandleType::Suint256,
             vec![a],
-            chain_event_ref(1, 2, 2),
+            default_event_ref(2, 2),
         ),
     );
-    let unknown = handle_key(1, 7, 99);
+    let unknown = default_handle_key(99);
     let observed_keys = [a, b, pending_derived, failed_derived, unknown];
 
     let snapshot_before = handle_state_snapshot(&host, &observed_keys);
@@ -232,7 +229,7 @@ fn resolve_handle_does_not_change_handle_graph_state_for_known_records() {
 fn resolve_handle_matches_get_handle_state_across_known_and_unknown_keys() {
     let mut host = running_host();
     let (a, b) = seed_suint_pair(&mut host);
-    let derived = handle_key(1, 7, 10);
+    let derived = default_handle_key(10);
     ingest(
         &mut host,
         derived_event(
@@ -240,10 +237,10 @@ fn resolve_handle_matches_get_handle_state_across_known_and_unknown_keys() {
             OperationCode::Add,
             HandleType::Suint256,
             vec![a, b],
-            chain_event_ref(1, 2, 1),
+            default_event_ref(2, 1),
         ),
     );
-    let unknown = handle_key(1, 7, 99);
+    let unknown = default_handle_key(99);
 
     for key in [&a, &b, &derived, &unknown] {
         assert_eq!(
@@ -270,10 +267,10 @@ fn ingest(host: &mut CoprocessorHost, event: ChainEvent) -> HandleRecord {
 }
 
 fn seed_suint_pair(host: &mut CoprocessorHost) -> (HandleKey, HandleKey) {
-    let a = handle_key(1, 7, 1);
-    let b = handle_key(1, 7, 2);
-    seed_imported(host, a, HandleType::Suint256, chain_event_ref(1, 1, 1));
-    seed_imported(host, b, HandleType::Suint256, chain_event_ref(1, 1, 2));
+    let a = default_handle_key(1);
+    let b = default_handle_key(2);
+    seed_imported(host, a, HandleType::Suint256, default_event_ref(1, 1));
+    seed_imported(host, b, HandleType::Suint256, default_event_ref(1, 2));
     (a, b)
 }
 
@@ -339,12 +336,20 @@ fn handle_state_snapshot(
         .collect()
 }
 
+fn default_handle_key(handle_seed: u8) -> HandleKey {
+    handle_key(DEFAULT_CHAIN, DEFAULT_CONTRACT_SEED, handle_seed)
+}
+
 fn handle_key(chain_id: u64, contract_seed: u8, handle_seed: u8) -> HandleKey {
     HandleKey {
         chain_id: ChainId(chain_id),
         contract_address: ContractAddress([contract_seed; 20]),
         handle_id: HandleId([handle_seed; 32]),
     }
+}
+
+fn default_event_ref(block_number: u64, log_index: u32) -> ChainEventRef {
+    chain_event_ref(DEFAULT_CHAIN, block_number, log_index)
 }
 
 fn chain_event_ref(chain_id: u64, block_number: u64, log_index: u32) -> ChainEventRef {
