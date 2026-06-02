@@ -17,6 +17,9 @@ dependencies = [
 [[package]]
 name = "coprocessor-handle-graph-core"
 version = "0.1.0"
+dependencies = [
+ "coprocessor-ciphertext-binding",
+]
 
 [[package]]
 name = "coprocessor-mpc-client"
