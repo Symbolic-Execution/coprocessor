@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/coprocessor-host",
     "crates/handle-graph-core",
     "crates/ciphertext-binding",
     "crates/transport-json",

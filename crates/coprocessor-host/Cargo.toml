@@ -1,0 +1,15 @@
+[package]
+name = "coprocessor-host"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "coprocessor_host"
+path = "src/lib.rs"
+
+[[bin]]
+name = "coprocessor-host"
+path = "src/main.rs"
+
+[dependencies]
+coprocessor-handle-graph-core = { path = "../handle-graph-core" }

@@ -22,6 +22,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "coprocessor-host"
+version = "0.1.0"
+dependencies = [
+ "coprocessor-handle-graph-core",
+]
+
+[[package]]
 name = "coprocessor-mpc-client"
 version = "0.1.0"
 dependencies = [
