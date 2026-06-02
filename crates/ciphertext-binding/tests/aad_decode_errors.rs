@@ -8,8 +8,26 @@ use coprocessor_ciphertext_binding::{
     SystemInputAadV1,
 };
 
+const DIRECT_ARRAY_HEADER: u8 = 0x80;
+const BYTE_STRING_32_HEADER_LEN: usize = 2;
+const BYTE_STRING_32_FIELD_LEN: usize = BYTE_STRING_32_HEADER_LEN + 32;
+const PREFIX_LEN: usize = 4;
+
 fn fill(byte: u8) -> [u8; 32] {
     [byte; 32]
+}
+
+fn set_short_array_len(bytes: &mut [u8], len: u8) {
+    bytes[0] = DIRECT_ARRAY_HEADER | len;
+}
+
+fn remove_final_bytes32_field(bytes: &mut Vec<u8>) {
+    bytes.truncate(bytes.len() - BYTE_STRING_32_FIELD_LEN);
+}
+
+fn append_extra_uint_zero(bytes: &mut Vec<u8>) {
+    set_short_array_len(bytes, 10);
+    bytes.push(0x00);
 }
 
 fn sample_system_input() -> SystemInputAadV1 {
@@ -133,13 +151,9 @@ fn unknown_kind_discriminant_surfaces_unknown_kind_error() {
 
 #[test]
 fn wrong_array_length_surfaces_wrong_length_error_for_each_kind() {
-    // SystemInput should be 7. Truncate to 6 by stripping the final key_id
-    // and shortening the array header from 0x87 to 0x86.
     let mut bytes = sample_system_input().encode();
-    // The last field is a 32-byte byte string preceded by `0x58 32`. Drop 34 bytes.
-    let new_len = bytes.len() - 34;
-    bytes.truncate(new_len);
-    bytes[0] = 0x80 | 6;
+    remove_final_bytes32_field(&mut bytes);
+    set_short_array_len(&mut bytes, 6);
     let err = SystemInputAadV1::decode(&bytes).unwrap_err();
     assert_eq!(
         err,
@@ -150,12 +164,9 @@ fn wrong_array_length_surfaces_wrong_length_error_for_each_kind() {
         }
     );
 
-    // SystemHandle should be 7. Truncate to 6 the same way: strip the final
-    // key_id (`0x58 32` + 32 bytes = 34 bytes) and shorten the array header.
     let mut bytes = sample_system_handle().encode();
-    let new_len = bytes.len() - 34;
-    bytes.truncate(new_len);
-    bytes[0] = 0x80 | 6;
+    remove_final_bytes32_field(&mut bytes);
+    set_short_array_len(&mut bytes, 6);
     let err = SystemHandleAadV1::decode(&bytes).unwrap_err();
     assert_eq!(
         err,
@@ -166,11 +177,8 @@ fn wrong_array_length_surfaces_wrong_length_error_for_each_kind() {
         }
     );
 
-    // Enclave should be 9. Extend to 10 by appending an extra uint(0) and
-    // bumping the array header from 0x89 to 0x8a.
     let mut bytes = sample_enclave().encode();
-    bytes[0] = 0x80 | 10;
-    bytes.push(0x00);
+    append_extra_uint_zero(&mut bytes);
     let err = EnclaveAadV1::decode(&bytes).unwrap_err();
     assert_eq!(
         err,
@@ -181,10 +189,8 @@ fn wrong_array_length_surfaces_wrong_length_error_for_each_kind() {
         }
     );
 
-    // Reader should be 9. Extend to 10 the same way.
     let mut bytes = sample_reader().encode();
-    bytes[0] = 0x80 | 10;
-    bytes.push(0x00);
+    append_extra_uint_zero(&mut bytes);
     let err = ReaderAadV1::decode(&bytes).unwrap_err();
     assert_eq!(
         err,
@@ -198,21 +204,13 @@ fn wrong_array_length_surfaces_wrong_length_error_for_each_kind() {
 
 #[test]
 fn wrong_field_type_surfaces_wrong_field_type_error() {
-    // SystemInputAadV1 layout:
-    // [arr(7), version(uint), kind(uint), chain_id(uint), domain_id(bstr32),
-    //  contract(bstr20), type_tag(tstr), key_id(bstr32)]
-    // Corrupt chain_id by replacing the small-uint byte 0x01 with a text-string
-    // header for "" (0x60). The kind byte still says SystemInput, so the field
-    // typing error surfaces as WrongFieldType for `chain_id`.
     let mut bytes = sample_system_input().encode();
-    // bytes[0]=arr header, bytes[1]=version uint, bytes[2]=kind uint,
-    // bytes[3]=chain_id uint. Overwrite that single chain_id byte (sample uses
-    // chain_id=1, which encodes as 0x01) with 0x60 (text string of length 0).
+    let chain_id_offset = PREFIX_LEN - 1;
     assert_eq!(
-        bytes[3], 0x01,
+        bytes[chain_id_offset], 0x01,
         "test setup expects chain_id encoded as 0x01"
     );
-    bytes[3] = 0x60;
+    bytes[chain_id_offset] = 0x60;
     let err = SystemInputAadV1::decode(&bytes).unwrap_err();
     assert_eq!(
         err,
@@ -226,16 +224,14 @@ fn wrong_field_type_surfaces_wrong_field_type_error() {
 
 #[test]
 fn wrong_byte_string_length_surfaces_specific_error() {
-    // Replace the 32-byte domain_id with a 31-byte byte string.
-    // SystemHandle layout puts domain_id right after chain_id (uint 0x01).
     let mut bytes = sample_system_handle().encode();
-    // domain_id starts at offset 4 (arr, version, kind, chain_id each 1 byte).
-    // Original head: 0x58, 32, then 32 bytes. Replace length byte 32 with 31
-    // and drop one byte from the tail of the 32-byte payload.
-    assert_eq!(bytes[4], 0x58);
-    assert_eq!(bytes[5], 32);
-    bytes[5] = 31;
-    bytes.remove(6 + 31);
+    let domain_id_header_offset = PREFIX_LEN;
+    let domain_id_len_offset = domain_id_header_offset + 1;
+    let removed_payload_byte_offset = domain_id_len_offset + 1 + 31;
+    assert_eq!(bytes[domain_id_header_offset], 0x58);
+    assert_eq!(bytes[domain_id_len_offset], 32);
+    bytes[domain_id_len_offset] = 31;
+    bytes.remove(removed_payload_byte_offset);
     let err = SystemHandleAadV1::decode(&bytes).unwrap_err();
     assert_eq!(
         err,
@@ -280,15 +276,8 @@ fn non_array_top_level_is_rejected_as_malformed() {
 
 #[test]
 fn invalid_utf8_in_type_tag_surfaces_invalid_utf8_error() {
-    // SystemHandle layout: arr, version, kind, chain_id, domain_id(34 bytes),
-    // handle_id(34 bytes), type_tag(tstr), key_id(34 bytes).
     let mut bytes = sample_system_handle().encode();
-    // Locate the type_tag head. After arr+ver+kind+chain (4 bytes), domain_id
-    // takes 2+32=34 bytes, handle_id takes 34 bytes. So type_tag head is at
-    // offset 4+34+34 = 72.
-    let type_tag_head_offset = 1 + 1 + 1 + 1 + 34 + 34;
-    // Original sample uses "sbool" (5 bytes). Text string head for length 5 is
-    // 0x65 (major 3 | 5). Replace the 5-byte payload with invalid UTF-8.
+    let type_tag_head_offset = PREFIX_LEN + BYTE_STRING_32_FIELD_LEN + BYTE_STRING_32_FIELD_LEN;
     assert_eq!(bytes[type_tag_head_offset], 0x65);
     let payload_start = type_tag_head_offset + 1;
     bytes[payload_start..payload_start + 5].copy_from_slice(&[0xff, 0xfe, 0xfd, 0xfc, 0xfb]);
@@ -304,11 +293,6 @@ fn invalid_utf8_in_type_tag_surfaces_invalid_utf8_error() {
 
 #[test]
 fn non_canonical_uint_encoding_is_rejected() {
-    // Shortest form for version=1 is the immediate byte 0x01.
-    // Encoding it as a 1-byte extension (0x18 0x01) is a valid CBOR uint but
-    // not deterministic per RFC 8949 §4.2.1. A canonical codec must reject it.
-    // Take the SystemInput sample and rewrite the version byte 0x01 (offset 1)
-    // as 0x18 0x01, shifting the rest of the payload down by one byte.
     let original = sample_system_input().encode();
     let mut bytes = Vec::with_capacity(original.len() + 1);
     bytes.push(original[0]);
@@ -320,17 +304,15 @@ fn non_canonical_uint_encoding_is_rejected() {
 
 #[test]
 fn non_canonical_byte_string_length_is_rejected() {
-    // 32-byte payloads use 1-byte length extension (0x58, 32). Re-encoding
-    // the length as a 2-byte extension (0x59, 0x00, 0x20) inflates the header
-    // without changing semantics, so the canonical decoder must reject it.
     let original = sample_system_handle().encode();
-    // domain_id starts at offset 4: 0x58, 32, then 32 payload bytes.
-    assert_eq!(original[4], 0x58);
-    assert_eq!(original[5], 32);
+    let domain_id_header_offset = PREFIX_LEN;
+    let domain_id_len_offset = domain_id_header_offset + 1;
+    assert_eq!(original[domain_id_header_offset], 0x58);
+    assert_eq!(original[domain_id_len_offset], 32);
     let mut bytes = Vec::with_capacity(original.len() + 1);
-    bytes.extend_from_slice(&original[..4]);
+    bytes.extend_from_slice(&original[..domain_id_header_offset]);
     bytes.extend_from_slice(&[0x59, 0x00, 0x20]);
-    bytes.extend_from_slice(&original[6..]);
+    bytes.extend_from_slice(&original[domain_id_len_offset + 1..]);
     let err = SystemHandleAadV1::decode(&bytes).unwrap_err();
     assert_eq!(err, AadDecodeError::NonCanonicalEncoding);
 }

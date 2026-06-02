@@ -214,14 +214,13 @@ impl CiphertextBindingAad {
 
 impl SystemInputAadV1 {
     pub fn encode(&self) -> Vec<u8> {
-        let mut out = Vec::new();
-        write_aad_prefix(&mut out, AadKind::SystemInput, self.version);
-        write_unsigned_integer(&mut out, self.chain_id);
-        write_byte_string(&mut out, &self.domain_id.0);
-        write_byte_string(&mut out, &self.contract.0);
-        write_text_string(&mut out, &self.type_tag);
-        write_byte_string(&mut out, &self.key_id.0);
-        out
+        encode_aad(AadKind::SystemInput, self.version, |out| {
+            write_unsigned_integer(out, self.chain_id);
+            write_byte_string(out, &self.domain_id.0);
+            write_byte_string(out, &self.contract.0);
+            write_text_string(out, &self.type_tag);
+            write_byte_string(out, &self.key_id.0);
+        })
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, AadDecodeError> {
@@ -233,14 +232,13 @@ impl SystemInputAadV1 {
 
 impl SystemHandleAadV1 {
     pub fn encode(&self) -> Vec<u8> {
-        let mut out = Vec::new();
-        write_aad_prefix(&mut out, AadKind::SystemHandle, self.version);
-        write_unsigned_integer(&mut out, self.chain_id);
-        write_byte_string(&mut out, &self.domain_id.0);
-        write_byte_string(&mut out, &self.handle_id.0);
-        write_text_string(&mut out, &self.type_tag);
-        write_byte_string(&mut out, &self.key_id.0);
-        out
+        encode_aad(AadKind::SystemHandle, self.version, |out| {
+            write_unsigned_integer(out, self.chain_id);
+            write_byte_string(out, &self.domain_id.0);
+            write_byte_string(out, &self.handle_id.0);
+            write_text_string(out, &self.type_tag);
+            write_byte_string(out, &self.key_id.0);
+        })
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, AadDecodeError> {
@@ -252,16 +250,15 @@ impl SystemHandleAadV1 {
 
 impl EnclaveAadV1 {
     pub fn encode(&self) -> Vec<u8> {
-        let mut out = Vec::new();
-        write_aad_prefix(&mut out, AadKind::Enclave, self.version);
-        write_unsigned_integer(&mut out, self.chain_id);
-        write_byte_string(&mut out, &self.domain_id.0);
-        write_byte_string(&mut out, &self.request_id.0);
-        write_byte_string(&mut out, &self.handle_id.0);
-        write_text_string(&mut out, &self.type_tag);
-        write_byte_string(&mut out, &self.attestation_digest.0);
-        write_byte_string(&mut out, &self.key_id.0);
-        out
+        encode_aad(AadKind::Enclave, self.version, |out| {
+            write_unsigned_integer(out, self.chain_id);
+            write_byte_string(out, &self.domain_id.0);
+            write_byte_string(out, &self.request_id.0);
+            write_byte_string(out, &self.handle_id.0);
+            write_text_string(out, &self.type_tag);
+            write_byte_string(out, &self.attestation_digest.0);
+            write_byte_string(out, &self.key_id.0);
+        })
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, AadDecodeError> {
@@ -273,16 +270,15 @@ impl EnclaveAadV1 {
 
 impl ReaderAadV1 {
     pub fn encode(&self) -> Vec<u8> {
-        let mut out = Vec::new();
-        write_aad_prefix(&mut out, AadKind::Reader, self.version);
-        write_unsigned_integer(&mut out, self.chain_id);
-        write_byte_string(&mut out, &self.domain_id.0);
-        write_byte_string(&mut out, &self.request_id.0);
-        write_byte_string(&mut out, &self.handle_id.0);
-        write_byte_string(&mut out, &self.reader_id.0);
-        write_text_string(&mut out, &self.type_tag);
-        write_byte_string(&mut out, &self.key_id.0);
-        out
+        encode_aad(AadKind::Reader, self.version, |out| {
+            write_unsigned_integer(out, self.chain_id);
+            write_byte_string(out, &self.domain_id.0);
+            write_byte_string(out, &self.request_id.0);
+            write_byte_string(out, &self.handle_id.0);
+            write_byte_string(out, &self.reader_id.0);
+            write_text_string(out, &self.type_tag);
+            write_byte_string(out, &self.key_id.0);
+        })
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, AadDecodeError> {
@@ -547,6 +543,13 @@ fn write_aad_prefix(out: &mut Vec<u8>, kind: AadKind, version: u8) {
     write_array_header(out, kind.array_length());
     write_unsigned_integer(out, version as u64);
     write_unsigned_integer(out, kind.discriminant());
+}
+
+fn encode_aad(kind: AadKind, version: u8, write_body: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_aad_prefix(&mut out, kind, version);
+    write_body(&mut out);
+    out
 }
 
 fn write_unsigned_integer(out: &mut Vec<u8>, value: u64) {
