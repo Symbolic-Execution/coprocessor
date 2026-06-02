@@ -947,12 +947,7 @@ fn gte_with_three_inputs_is_wrong_arity() {
     let mut core = HandleGraphCore::new();
     let (a, b) = seed_suint_pair(&mut core, 1, 2);
     let c = handle_key(1, 7, 253);
-    seed_imported(
-        &mut core,
-        c,
-        HandleType::Suint256,
-        chain_event_ref(1, 1, 3),
-    );
+    seed_imported(&mut core, c, HandleType::Suint256, chain_event_ref(1, 1, 3));
     let derived = handle_key(1, 7, 254);
 
     let _ = expect_recorded(core.apply_chain_event(derived_operation_event(

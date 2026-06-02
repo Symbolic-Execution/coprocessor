@@ -130,12 +130,7 @@ fn tombstoning_source_handle_cascades_to_derived_handle_that_depends_on_it() {
     let b = handle_key(1, 7, 2);
     let source_event = chain_event_ref(1, 1, 1);
     seed_imported(&mut core, a, HandleType::Suint256, source_event);
-    seed_imported(
-        &mut core,
-        b,
-        HandleType::Suint256,
-        chain_event_ref(1, 1, 2),
-    );
+    seed_imported(&mut core, b, HandleType::Suint256, chain_event_ref(1, 1, 2));
     let derived = handle_key(1, 7, 10);
     let derived_event = chain_event_ref(1, 2, 1);
     let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
@@ -164,12 +159,7 @@ fn cascade_applies_even_when_downstream_derived_event_ref_is_still_canonical() {
     let b = handle_key(1, 7, 2);
     let source_event = chain_event_ref(1, 1, 1);
     seed_imported(&mut core, a, HandleType::Suint256, source_event);
-    seed_imported(
-        &mut core,
-        b,
-        HandleType::Suint256,
-        chain_event_ref(1, 1, 2),
-    );
+    seed_imported(&mut core, b, HandleType::Suint256, chain_event_ref(1, 1, 2));
     let derived = handle_key(1, 7, 10);
     let still_canonical_derived_event = chain_event_ref(1, 99, 99);
     let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
@@ -248,12 +238,7 @@ fn multi_hop_cascade_tombstones_all_descendants_through_handle_graph() {
     let b = handle_key(1, 7, 2);
     let a_event = chain_event_ref(1, 1, 1);
     seed_imported(&mut core, a, HandleType::Suint256, a_event);
-    seed_imported(
-        &mut core,
-        b,
-        HandleType::Suint256,
-        chain_event_ref(1, 1, 2),
-    );
+    seed_imported(&mut core, b, HandleType::Suint256, chain_event_ref(1, 1, 2));
     let other_input = handle_key(1, 7, 3);
     let other_input_2 = handle_key(1, 7, 4);
     seed_imported(
@@ -361,12 +346,7 @@ fn cascaded_tombstone_excludes_downstream_handle_from_resolution_readiness() {
     let b = handle_key(1, 7, 2);
     let a_event = chain_event_ref(1, 1, 1);
     seed_imported(&mut core, a, HandleType::Suint256, a_event);
-    seed_imported(
-        &mut core,
-        b,
-        HandleType::Suint256,
-        chain_event_ref(1, 1, 2),
-    );
+    seed_imported(&mut core, b, HandleType::Suint256, chain_event_ref(1, 1, 2));
     let derived = handle_key(1, 7, 10);
     let _ = expect_recorded(core.apply_chain_event(derived_operation_event(
         derived,
@@ -459,14 +439,16 @@ fn seed_imported(
     handle_type: HandleType,
     event_ref: ChainEventRef,
 ) {
-    let _ = expect_recorded(core.apply_chain_event(ChainEvent::ImportedHandle(ImportedHandle {
-        domain_id: DomainId(bytes32(DEFAULT_DOMAIN)),
-        handle_key,
-        handle_type,
-        system_ciphertext: SystemCiphertextV1(vec![0x01]),
-        materialization_receipt: MaterializationReceipt(vec![0x02]),
-        event_ref,
-    })));
+    let _ = expect_recorded(
+        core.apply_chain_event(ChainEvent::ImportedHandle(ImportedHandle {
+            domain_id: DomainId(bytes32(DEFAULT_DOMAIN)),
+            handle_key,
+            handle_type,
+            system_ciphertext: SystemCiphertextV1(vec![0x01]),
+            materialization_receipt: MaterializationReceipt(vec![0x02]),
+            event_ref,
+        })),
+    );
 }
 
 fn expect_recorded(outcome: IngestionOutcome) -> HandleRecord {
