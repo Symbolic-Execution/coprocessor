@@ -15,6 +15,10 @@ use std::collections::BTreeSet;
 
 use coprocessor_handle_graph_core::HandleGraphCore;
 
+mod chain_ingestion;
+
+pub use chain_ingestion::{ChainEventSource, ChainView, IngestionReport};
+
 const ALL_DEPENDENCIES: [DependencyName; 3] = [
     DependencyName::SymVmEventSurface,
     DependencyName::Mpc,
@@ -50,6 +54,10 @@ impl DependencyName {
 pub struct HostConfig {
     /// Human-readable label for the deployment, used in logs and health output.
     pub deployment_label: String,
+    /// Confirmation view from which Chain Event Ingestion pulls. Defaults to
+    /// [`ChainView::Safe`]; deployments that require stricter confirmation
+    /// can choose [`ChainView::Finalized`].
+    pub chain_view: ChainView,
 }
 
 impl HostConfig {
@@ -59,6 +67,7 @@ impl HostConfig {
     pub fn for_local_development() -> Self {
         Self {
             deployment_label: "local-development".to_string(),
+            chain_view: ChainView::default(),
         }
     }
 
