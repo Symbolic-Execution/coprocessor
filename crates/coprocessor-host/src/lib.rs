@@ -239,6 +239,19 @@ impl CoprocessorHost {
         internal_api::project_canonical(self.handle_graph_core.canonical_handle(handle_key))
     }
 
+    /// Internal Coordinator API: Resolve Handle Request, current-state slice.
+    ///
+    /// Returns the same [`HandleStateView`] projection as
+    /// [`Self::get_handle_state`] for already-known Canonical Handle Records.
+    /// This slice intentionally performs no Resolution Scheduler work and
+    /// creates no Handle Records: Chain Event Ingestion is the only source of
+    /// Handle Records, so an unknown or tombstoned Handle Key returns
+    /// [`HandleStateView::Unknown`] without leaving any placeholder behind.
+    /// The call therefore cannot move Handle Graph state by itself.
+    pub fn resolve_handle(&self, handle_key: &HandleKey) -> HandleStateView {
+        internal_api::project_canonical(self.handle_graph_core.canonical_handle(handle_key))
+    }
+
     fn unavailable_dependencies(&self) -> Vec<DependencyName> {
         DependencyName::all()
             .into_iter()
