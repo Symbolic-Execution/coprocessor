@@ -273,6 +273,39 @@ fn invalid_utf8_in_type_tag_surfaces_invalid_utf8_error() {
 }
 
 #[test]
+fn non_canonical_uint_encoding_is_rejected() {
+    // Shortest form for version=1 is the immediate byte 0x01.
+    // Encoding it as a 1-byte extension (0x18 0x01) is a valid CBOR uint but
+    // not deterministic per RFC 8949 §4.2.1. A canonical codec must reject it.
+    // Take the SystemInput sample and rewrite the version byte 0x01 (offset 1)
+    // as 0x18 0x01, shifting the rest of the payload down by one byte.
+    let original = sample_system_input().encode();
+    let mut bytes = Vec::with_capacity(original.len() + 1);
+    bytes.push(original[0]);
+    bytes.extend_from_slice(&[0x18, 0x01]);
+    bytes.extend_from_slice(&original[2..]);
+    let err = SystemInputAadV1::decode(&bytes).unwrap_err();
+    assert_eq!(err, AadDecodeError::NonCanonicalEncoding);
+}
+
+#[test]
+fn non_canonical_byte_string_length_is_rejected() {
+    // 32-byte payloads use 1-byte length extension (0x58, 32). Re-encoding
+    // the length as a 2-byte extension (0x59, 0x00, 0x20) inflates the header
+    // without changing semantics, so the canonical decoder must reject it.
+    let original = sample_system_handle().encode();
+    // domain_id starts at offset 4: 0x58, 32, then 32 payload bytes.
+    assert_eq!(original[4], 0x58);
+    assert_eq!(original[5], 32);
+    let mut bytes = Vec::with_capacity(original.len() + 1);
+    bytes.extend_from_slice(&original[..4]);
+    bytes.extend_from_slice(&[0x59, 0x00, 0x20]);
+    bytes.extend_from_slice(&original[6..]);
+    let err = SystemHandleAadV1::decode(&bytes).unwrap_err();
+    assert_eq!(err, AadDecodeError::NonCanonicalEncoding);
+}
+
+#[test]
 fn version_overflow_when_value_exceeds_u8_is_rejected() {
     // Hand-build a SystemInput shape with version = 256 (overflows u8).
     // [arr(7), uint(256), uint(1), uint(1), bstr32, bstr20, tstr0, bstr32]

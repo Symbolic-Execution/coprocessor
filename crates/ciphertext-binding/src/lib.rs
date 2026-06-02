@@ -118,6 +118,7 @@ pub enum CiphertextBindingAad {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AadDecodeError {
     Malformed,
+    NonCanonicalEncoding,
     TrailingBytes,
     UnknownKind(u64),
     WrongKind {
@@ -405,16 +406,16 @@ fn decode_with_prefix<T>(
 }
 
 fn decode_prefix(reader: &mut Reader) -> Result<Prefix, AadDecodeError> {
-    let (major, array_len) = reader.read_header().ok_or(AadDecodeError::Malformed)?;
+    let (major, array_len) = reader.read_header()?;
     if major != MAJOR_ARRAY {
         return Err(AadDecodeError::Malformed);
     }
-    let (vmajor, varg) = reader.read_header().ok_or(AadDecodeError::Malformed)?;
+    let (vmajor, varg) = reader.read_header()?;
     if vmajor != MAJOR_UINT {
         return Err(AadDecodeError::Malformed);
     }
     let version = u8::try_from(varg).map_err(|_| AadDecodeError::VersionOverflow(varg))?;
-    let (kmajor, karg) = reader.read_header().ok_or(AadDecodeError::Malformed)?;
+    let (kmajor, karg) = reader.read_header()?;
     if kmajor != MAJOR_UINT {
         return Err(AadDecodeError::Malformed);
     }
@@ -463,7 +464,7 @@ fn read_uint_field(
     kind: AadKind,
     field: &'static str,
 ) -> Result<u64, AadDecodeError> {
-    let (major, arg) = reader.read_header().ok_or(AadDecodeError::Malformed)?;
+    let (major, arg) = reader.read_header()?;
     if major != MAJOR_UINT {
         return Err(AadDecodeError::WrongFieldType {
             kind,
@@ -479,7 +480,7 @@ fn read_fixed_bytes<const N: usize>(
     kind: AadKind,
     field: &'static str,
 ) -> Result<[u8; N], AadDecodeError> {
-    let (major, arg) = reader.read_header().ok_or(AadDecodeError::Malformed)?;
+    let (major, arg) = reader.read_header()?;
     if major != MAJOR_BYTE_STRING {
         return Err(AadDecodeError::WrongFieldType {
             kind,
@@ -507,7 +508,7 @@ fn read_text_string(
     kind: AadKind,
     field: &'static str,
 ) -> Result<String, AadDecodeError> {
-    let (major, arg) = reader.read_header().ok_or(AadDecodeError::Malformed)?;
+    let (major, arg) = reader.read_header()?;
     if major != MAJOR_TEXT_STRING {
         return Err(AadDecodeError::WrongFieldType {
             kind,
@@ -603,27 +604,36 @@ impl<'a> Reader<'a> {
         Some(slice)
     }
 
-    fn read_header(&mut self) -> Option<(u8, u64)> {
-        let initial = self.read_byte()?;
+    fn read_header(&mut self) -> Result<(u8, u64), AadDecodeError> {
+        let initial = self.read_byte().ok_or(AadDecodeError::Malformed)?;
         let major = initial >> 5;
         let info = initial & 0x1f;
-        let arg = match info {
-            0..=23 => info as u64,
-            24 => self.read_byte()? as u64,
+        let (arg, min_value) = match info {
+            0..=23 => (info as u64, 0),
+            24 => (
+                self.read_byte().ok_or(AadDecodeError::Malformed)? as u64,
+                24,
+            ),
             25 => {
-                let b = self.take(2)?;
-                u16::from_be_bytes([b[0], b[1]]) as u64
+                let b = self.take(2).ok_or(AadDecodeError::Malformed)?;
+                (u16::from_be_bytes([b[0], b[1]]) as u64, 1 << 8)
             }
             26 => {
-                let b = self.take(4)?;
-                u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as u64
+                let b = self.take(4).ok_or(AadDecodeError::Malformed)?;
+                (u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as u64, 1 << 16)
             }
             27 => {
-                let b = self.take(8)?;
-                u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+                let b = self.take(8).ok_or(AadDecodeError::Malformed)?;
+                (
+                    u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]),
+                    1 << 32,
+                )
             }
-            _ => return None,
+            _ => return Err(AadDecodeError::Malformed),
         };
-        Some((major, arg))
+        if arg < min_value {
+            return Err(AadDecodeError::NonCanonicalEncoding);
+        }
+        Ok((major, arg))
     }
 }
