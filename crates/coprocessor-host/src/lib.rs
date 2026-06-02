@@ -15,6 +15,12 @@ use std::collections::BTreeSet;
 
 use coprocessor_handle_graph_core::HandleGraphCore;
 
+const ALL_DEPENDENCIES: [DependencyName; 3] = [
+    DependencyName::SymVmEventSurface,
+    DependencyName::Mpc,
+    DependencyName::Enclave,
+];
+
 /// Named dependencies that the Coprocessor Host requires before it can serve
 /// resolution work. Each variant marks a seam that future slices will wire.
 /// Until a seam is wired, the host reports it as `Unavailable` in [`Readiness`].
@@ -33,11 +39,7 @@ impl DependencyName {
     /// adding a dependency means extending [`DependencyName`] and surfacing the
     /// seam in the readiness contract.
     pub fn all() -> [DependencyName; 3] {
-        [
-            DependencyName::SymVmEventSurface,
-            DependencyName::Mpc,
-            DependencyName::Enclave,
-        ]
+        ALL_DEPENDENCIES
     }
 }
 
@@ -69,8 +71,7 @@ impl HostConfig {
 }
 
 /// Reasons configuration validation can fail before the host starts. Failure
-/// keeps the host in [`LifecycleState::NotStarted`] and never instantiates the
-/// Handle Graph Core.
+/// keeps the host in [`LifecycleState::NotStarted`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HostConfigError {
     EmptyDeploymentLabel,
@@ -114,7 +115,7 @@ pub struct CoprocessorHost {
     lifecycle: LifecycleState,
     /// Set of dependencies currently reachable. The complement against
     /// [`DependencyName::all`] is the `Unavailable` list reported in readiness.
-    available: BTreeSet<DependencyName>,
+    available_dependencies: BTreeSet<DependencyName>,
 }
 
 impl CoprocessorHost {
@@ -124,15 +125,13 @@ impl CoprocessorHost {
         config.validate()
     }
 
-    /// Construct a host in the [`LifecycleState::NotStarted`] phase. The
-    /// Handle Graph Core is not instantiated until [`CoprocessorHost::start`]
-    /// succeeds.
+    /// Construct a host in the [`LifecycleState::NotStarted`] phase.
     pub fn new(config: HostConfig) -> Self {
         Self {
             config,
             handle_graph_core: HandleGraphCore::new(),
             lifecycle: LifecycleState::NotStarted,
-            available: BTreeSet::new(),
+            available_dependencies: BTreeSet::new(),
         }
     }
 
@@ -173,10 +172,7 @@ impl CoprocessorHost {
             LifecycleState::NotStarted => Readiness::NotStarted,
             LifecycleState::ShutDown => Readiness::ShutDown,
             LifecycleState::Running => {
-                let unavailable: Vec<DependencyName> = DependencyName::all()
-                    .into_iter()
-                    .filter(|dep| !self.available.contains(dep))
-                    .collect();
+                let unavailable = self.unavailable_dependencies();
                 if unavailable.is_empty() {
                     Readiness::Ready
                 } else {
@@ -190,13 +186,13 @@ impl CoprocessorHost {
     /// wire chain, MPC, and Enclave seams; calling it from a test simulates
     /// that wiring without pulling in those subsystems.
     pub fn mark_dependency_available(&mut self, dep: DependencyName) {
-        self.available.insert(dep);
+        self.available_dependencies.insert(dep);
     }
 
     /// Mark a named dependency as unreachable. Used when a previously
     /// available dependency becomes degraded (e.g. RPC outage).
     pub fn mark_dependency_unavailable(&mut self, dep: DependencyName) {
-        self.available.remove(&dep);
+        self.available_dependencies.remove(&dep);
     }
 
     /// Borrow the owned [`HandleGraphCore`]. Coordinator-facing reads should
@@ -216,6 +212,13 @@ impl CoprocessorHost {
     /// Read-only access to the loaded configuration.
     pub fn config(&self) -> &HostConfig {
         &self.config
+    }
+
+    fn unavailable_dependencies(&self) -> Vec<DependencyName> {
+        DependencyName::all()
+            .into_iter()
+            .filter(|dep| !self.available_dependencies.contains(dep))
+            .collect()
     }
 }
 
