@@ -247,15 +247,16 @@ impl HandleGraphCore {
         persistence: &mut P,
     ) -> IngestionOutcome {
         let outcome = self.apply_chain_event(event);
-        match &outcome {
+        let consumed_event_ref = match &outcome {
             IngestionOutcome::Recorded(record) => {
                 persistence.put_handle_record(record.clone());
-                persistence.record_consumed_event(record.event_ref);
+                Some(record.event_ref)
             }
-            IngestionOutcome::DuplicateHandleKeyRejected(rejected) => {
-                persistence.record_consumed_event(rejected.event_ref);
-            }
-            IngestionOutcome::Idempotent => {}
+            IngestionOutcome::DuplicateHandleKeyRejected(rejected) => Some(rejected.event_ref),
+            IngestionOutcome::Idempotent => None,
+        };
+        if let Some(event_ref) = consumed_event_ref {
+            persistence.record_consumed_event(event_ref);
         }
         outcome
     }
@@ -266,12 +267,12 @@ impl HandleGraphCore {
     /// ingestion replay remains idempotent by [`ChainEventRef`] and canonical
     /// reads return the same Handle Records observed before the restart.
     pub fn restore_from_persistence<P: HandlePersistence>(persistence: &P) -> Self {
-        let mut records = HashMap::new();
-        for record in persistence.handle_records() {
-            records.insert(record.handle_key, record);
-        }
-        let consumed_events: HashSet<ChainEventRef> =
-            persistence.consumed_events().into_iter().collect();
+        let records: HashMap<HandleKey, HandleRecord> = persistence
+            .handle_records()
+            .into_iter()
+            .map(|record| (record.handle_key, record))
+            .collect();
+        let consumed_events = persistence.consumed_events().into_iter().collect();
         Self {
             records,
             consumed_events,
