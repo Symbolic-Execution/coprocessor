@@ -5,7 +5,7 @@
 //! base64 payloads) or a flat object whose values are JSON strings or
 //! unsigned-integer numbers (used for ChainEventRef). Nested objects, arrays,
 //! floats, escape sequences inside strings, signed numbers, booleans, and
-//! `null` are all rejected with a stable [`JsonParseError`].
+//! `null` are all rejected with stable [`JsonParseError`] variants.
 //!
 //! Errors name the parsing step that failed and the field where the failure
 //! was observed when one is known. They never include payload bytes.
@@ -23,8 +23,8 @@ pub enum JsonParseError {
     /// A string used an unsupported feature (escape sequences are not allowed
     /// in transport strings, since payloads are hex or base64).
     UnsupportedStringEscape,
-    /// A number could not be parsed as an unsigned integer (negative, decimal,
-    /// scientific, leading zeros, or out of `u64` range).
+    /// A digit-starting number could not be parsed as a canonical unsigned
+    /// integer (for example, leading zeros or out of `u64` range).
     InvalidUnsignedNumber { field: &'static str },
     /// Object had a duplicate key.
     DuplicateField { field: &'static str },
@@ -290,10 +290,7 @@ impl<'a> Reader<'a> {
     fn read_field_value(&mut self, key: &str) -> Result<FieldValue, JsonParseError> {
         match self.peek() {
             Some(b'"') => Ok(FieldValue::String(self.read_string_value()?)),
-            Some(b @ (b'0'..=b'9')) => {
-                let _ = b;
-                Ok(FieldValue::Uint(self.read_uint(key)?))
-            }
+            Some(b'0'..=b'9') => Ok(FieldValue::Uint(self.read_uint(key)?)),
             Some(_) => Err(JsonParseError::FieldShape {
                 field: stable_field_name(key),
                 expected: "string or unsigned integer",
@@ -328,10 +325,9 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// Borrow a stable field name back from the parsed key. The parser already
-/// validated that the key text is one of the field names callers asked for;
-/// matching against a tiny static set keeps the error type free of dynamic
-/// allocations and makes error matching in tests trivial.
+/// Borrow a stable field name back from known parsed keys. Unknown keys can
+/// still fail while their value is being parsed, before [`Object::finish`]
+/// rejects them as unexpected, so they use a generic non-payload field name.
 fn stable_field_name(key: &str) -> &'static str {
     match key {
         "chain_id" => "chain_id",

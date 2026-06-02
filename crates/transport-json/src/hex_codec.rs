@@ -54,10 +54,10 @@ pub fn decode_lower(
         });
     }
     let mut bytes = Vec::with_capacity(payload.len() / 2);
-    let mut chars = payload.bytes();
-    while let Some(hi) = chars.next() {
-        let lo = chars.next().expect("checked even length above");
-        bytes.push((nibble_value(field, hi)? << 4) | nibble_value(field, lo)?);
+    for pair in payload.as_bytes().chunks_exact(2) {
+        let hi = nibble_value(field, pair[0])?;
+        let lo = nibble_value(field, pair[1])?;
+        bytes.push((hi << 4) | lo);
     }
     if bytes.len() != expected_bytes {
         return Err(HexDecodeError::WrongByteLength {

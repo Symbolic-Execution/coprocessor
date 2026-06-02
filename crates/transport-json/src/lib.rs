@@ -95,125 +95,32 @@ hex_identifier!(TxHashHex, [u8; 32], 32, "tx_hash");
 // Conversions to/from the underlying domain types so callers do not have to
 // re-type the bytes when crossing the JSON boundary.
 
-impl From<CoreHandleId> for HandleIdHex {
-    fn from(value: CoreHandleId) -> Self {
-        Self(value.0)
-    }
+macro_rules! hex_identifier_conversion {
+    ($domain:ty, $wrapper:ty) => {
+        impl From<$domain> for $wrapper {
+            fn from(value: $domain) -> Self {
+                Self(value.0)
+            }
+        }
+
+        impl From<$wrapper> for $domain {
+            fn from(value: $wrapper) -> Self {
+                Self(value.0)
+            }
+        }
+    };
 }
 
-impl From<HandleIdHex> for CoreHandleId {
-    fn from(value: HandleIdHex) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<BindingHandleId> for HandleIdHex {
-    fn from(value: BindingHandleId) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<HandleIdHex> for BindingHandleId {
-    fn from(value: HandleIdHex) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<CoreContractAddress> for ContractAddressHex {
-    fn from(value: CoreContractAddress) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<ContractAddressHex> for CoreContractAddress {
-    fn from(value: ContractAddressHex) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<BindingContractAddress> for ContractAddressHex {
-    fn from(value: BindingContractAddress) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<ContractAddressHex> for BindingContractAddress {
-    fn from(value: ContractAddressHex) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<CoreDomainId> for DomainIdHex {
-    fn from(value: CoreDomainId) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<DomainIdHex> for CoreDomainId {
-    fn from(value: DomainIdHex) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<BindingDomainId> for DomainIdHex {
-    fn from(value: BindingDomainId) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<DomainIdHex> for BindingDomainId {
-    fn from(value: DomainIdHex) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<RequestId> for RequestIdHex {
-    fn from(value: RequestId) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<RequestIdHex> for RequestId {
-    fn from(value: RequestIdHex) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<ReaderId> for ReaderIdHex {
-    fn from(value: ReaderId) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<ReaderIdHex> for ReaderId {
-    fn from(value: ReaderIdHex) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<KeyId> for KeyIdHex {
-    fn from(value: KeyId) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<KeyIdHex> for KeyId {
-    fn from(value: KeyIdHex) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<BindingAttestationDigest> for AttestationDigestHex {
-    fn from(value: BindingAttestationDigest) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<AttestationDigestHex> for BindingAttestationDigest {
-    fn from(value: AttestationDigestHex) -> Self {
-        Self(value.0)
-    }
-}
+hex_identifier_conversion!(CoreHandleId, HandleIdHex);
+hex_identifier_conversion!(BindingHandleId, HandleIdHex);
+hex_identifier_conversion!(CoreContractAddress, ContractAddressHex);
+hex_identifier_conversion!(BindingContractAddress, ContractAddressHex);
+hex_identifier_conversion!(CoreDomainId, DomainIdHex);
+hex_identifier_conversion!(BindingDomainId, DomainIdHex);
+hex_identifier_conversion!(RequestId, RequestIdHex);
+hex_identifier_conversion!(ReaderId, ReaderIdHex);
+hex_identifier_conversion!(KeyId, KeyIdHex);
+hex_identifier_conversion!(BindingAttestationDigest, AttestationDigestHex);
 
 // ---------------------------------------------------------------------------
 // ChainEventRef JSON object

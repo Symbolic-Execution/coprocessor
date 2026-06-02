@@ -72,10 +72,10 @@ pub fn decode(text: &str) -> Result<Vec<u8>, Base64DecodeError> {
         // `=` is never valid in a non-final group and never valid before the
         // padding column in the final group; surface that as `InvalidPadding`
         // rather than letting the alphabet check map it to `InvalidCharacter`.
-        if !is_last && pad_in_group(group) {
+        if !is_last && group.contains(&b'=') {
             return Err(Base64DecodeError::InvalidPadding);
         }
-        if group[..4 - group_pad].iter().any(|b| *b == b'=') {
+        if group[..4 - group_pad].contains(&b'=') {
             return Err(Base64DecodeError::InvalidPadding);
         }
 
@@ -124,8 +124,4 @@ fn decode_alphabet_char(byte: u8) -> Result<u8, Base64DecodeError> {
         b'/' => Ok(63),
         _ => Err(Base64DecodeError::InvalidCharacter),
     }
-}
-
-fn pad_in_group(group: &[u8]) -> bool {
-    group.iter().any(|b| *b == b'=')
 }
