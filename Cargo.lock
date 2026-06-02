@@ -39,6 +39,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "coprocessor-nitro-enclave"
+version = "0.1.0"
+dependencies = [
+ "coprocessor-ciphertext-binding",
+]
+
+[[package]]
 name = "coprocessor-transport-json"
 version = "0.1.0"
 dependencies = [

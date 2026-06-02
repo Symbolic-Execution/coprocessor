@@ -1,0 +1,11 @@
+[package]
+name = "coprocessor-nitro-enclave"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "coprocessor_nitro_enclave"
+path = "src/lib.rs"
+
+[dependencies]
+coprocessor-ciphertext-binding = { path = "../ciphertext-binding" }

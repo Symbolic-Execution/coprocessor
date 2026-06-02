@@ -6,5 +6,6 @@ members = [
     "crates/enclave-runtime",
     "crates/mpc-config",
     "crates/mpc-client",
+    "crates/nitro-enclave",
 ]
 resolver = "2"
