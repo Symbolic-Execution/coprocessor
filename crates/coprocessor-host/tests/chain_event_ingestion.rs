@@ -163,7 +163,7 @@ fn ingestion_reports_a_duplicate_handle_key_as_duplicate_rejection() {
 fn ingestion_tombstones_source_handle_for_orphaned_event_ref_from_chain_view() {
     let key = handle_key(0x10);
     let event = imported_event(key, 5, 0);
-    let event_ref_for_key = imported_event_ref(&event);
+    let event_ref_for_key = event_ref_for(&event);
 
     let mut source = FakeChainSource::default();
     source.enqueue(vec![event]);
@@ -203,7 +203,7 @@ fn ingestion_tombstones_derived_handle_for_orphaned_event_ref_from_chain_view() 
         6,
         0,
     );
-    let derived_ref = derived_event_ref(&derived);
+    let derived_ref = event_ref_for(&derived);
 
     let mut source = FakeChainSource::default();
     source.enqueue(vec![a_event, b_event, derived]);
@@ -236,7 +236,7 @@ fn ingestion_cascades_orphan_discard_through_multi_hop_handle_lineage() {
     let e = handle_key(0x36);
 
     let a_event = imported_event(a, 5, 0);
-    let a_ref = imported_event_ref(&a_event);
+    let a_ref = event_ref_for(&a_event);
     let b_event = imported_event(b, 5, 1);
     let other_event = imported_event(other_input, 5, 2);
     let other_2_event = imported_event(other_input_2, 5, 3);
@@ -300,7 +300,7 @@ fn ingestion_cascades_orphan_discard_through_multi_hop_handle_lineage() {
 fn ingestion_orphan_discard_is_idempotent_for_repeated_reorg_signals() {
     let key = handle_key(0x40);
     let event = imported_event(key, 5, 0);
-    let event_ref_for_key = imported_event_ref(&event);
+    let event_ref_for_key = event_ref_for(&event);
 
     let mut source = FakeChainSource::default();
     source.enqueue(vec![event]);
@@ -329,7 +329,7 @@ fn ingestion_applies_orphan_discard_before_new_events_in_the_same_poll() {
     // source signals the orphan in the same batch as fresh, unrelated events.
     let orphan_key = handle_key(0x50);
     let orphan_event = imported_event(orphan_key, 5, 0);
-    let orphan_ref = imported_event_ref(&orphan_event);
+    let orphan_ref = event_ref_for(&orphan_event);
 
     let mut source = FakeChainSource::default();
     source.enqueue(vec![orphan_event]);
@@ -393,17 +393,11 @@ impl ChainEventSource for FakeChainSource {
     }
 }
 
-fn imported_event_ref(event: &ChainEvent) -> ChainEventRef {
+fn event_ref_for(event: &ChainEvent) -> ChainEventRef {
     match event {
         ChainEvent::ImportedHandle(e) => e.event_ref,
-        other => panic!("expected ImportedHandle event, got {other:?}"),
-    }
-}
-
-fn derived_event_ref(event: &ChainEvent) -> ChainEventRef {
-    match event {
+        ChainEvent::PlaintextHandle(e) => e.event_ref,
         ChainEvent::DerivedHandleOperation(e) => e.event_ref,
-        other => panic!("expected DerivedHandleOperation event, got {other:?}"),
     }
 }
 

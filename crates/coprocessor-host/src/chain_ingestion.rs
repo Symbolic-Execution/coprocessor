@@ -21,7 +21,9 @@
 //! attestation checks. Production sources will implement [`ChainEventSource`]
 //! against a real chain client; tests substitute a fake.
 
-use coprocessor_handle_graph_core::{ChainEvent, ChainEventRef, IngestionOutcome};
+use coprocessor_handle_graph_core::{
+    ChainEvent, ChainEventRef, IngestionOutcome, OrphanDiscardOutcome,
+};
 
 use crate::CoprocessorHost;
 
@@ -107,6 +109,11 @@ impl IngestionReport {
             IngestionOutcome::DuplicateHandleKeyRejected(_) => self.duplicates_rejected += 1,
         }
     }
+
+    fn count_orphan_discard(&mut self, outcome: OrphanDiscardOutcome) {
+        self.directly_tombstoned = outcome.directly_tombstoned.len();
+        self.cascade_tombstoned = outcome.cascade_tombstoned.len();
+    }
 }
 
 impl CoprocessorHost {
@@ -128,11 +135,10 @@ impl CoprocessorHost {
 
         let mut report = IngestionReport::default();
 
-        let discard = self
+        let orphan_discard = self
             .handle_graph_core_mut()
             .apply_orphan_discard(&orphaned_event_refs);
-        report.directly_tombstoned = discard.directly_tombstoned.len();
-        report.cascade_tombstoned = discard.cascade_tombstoned.len();
+        report.count_orphan_discard(orphan_discard);
 
         sort_by_canonical_log_order(&mut events);
         for event in events {
