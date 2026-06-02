@@ -46,11 +46,13 @@ const planSchema = z.object({
   ),
 });
 
+type PlannerIssue = z.infer<typeof planSchema>["issues"][number];
+
 export async function planIssues(
   openIssues: GithubIssue[],
   token: string,
   issueLabel: string,
-) {
+): Promise<PlannedIssue[]> {
   const plan = await sandcastle.run({
     hooks,
     sandbox: docker({ env: { GH_TOKEN: token } }),
@@ -67,7 +69,7 @@ export async function planIssues(
 
   const issuesById = new Map(openIssues.map((issue) => [issue.id, issue]));
 
-  return plan.output.issues.map((planned) => {
+  return plan.output.issues.map((planned: PlannerIssue) => {
     const issue = issuesById.get(planned.id);
     if (!issue) {
       throw new Error(`Planner returned unknown issue id: ${planned.id}`);

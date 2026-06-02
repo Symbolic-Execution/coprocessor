@@ -178,7 +178,10 @@ fn wrong_field_type_surfaces_wrong_field_type_error() {
     // bytes[0]=arr header, bytes[1]=version uint, bytes[2]=kind uint,
     // bytes[3]=chain_id uint. Overwrite that single chain_id byte (sample uses
     // chain_id=1, which encodes as 0x01) with 0x60 (text string of length 0).
-    assert_eq!(bytes[3], 0x01, "test setup expects chain_id encoded as 0x01");
+    assert_eq!(
+        bytes[3], 0x01,
+        "test setup expects chain_id encoded as 0x01"
+    );
     bytes[3] = 0x60;
     let err = SystemInputAadV1::decode(&bytes).unwrap_err();
     assert_eq!(

@@ -191,35 +191,31 @@ impl CiphertextBindingAad {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, AadDecodeError> {
-        let mut reader = Reader::new(bytes);
-        let prefix = decode_prefix(&mut reader)?;
-        check_array_length(prefix.kind, prefix.array_len)?;
-        let aad = match prefix.kind {
-            AadKind::SystemInput => {
-                CiphertextBindingAad::SystemInput(decode_system_input_body(&mut reader, prefix.version)?)
-            }
-            AadKind::SystemHandle => CiphertextBindingAad::SystemHandle(
-                decode_system_handle_body(&mut reader, prefix.version)?,
-            ),
-            AadKind::Enclave => {
-                CiphertextBindingAad::Enclave(decode_enclave_body(&mut reader, prefix.version)?)
-            }
-            AadKind::Reader => {
-                CiphertextBindingAad::Reader(decode_reader_body(&mut reader, prefix.version)?)
-            }
-        };
-        ensure_consumed(&reader)?;
-        Ok(aad)
+        decode_with_prefix(bytes, None, |reader, prefix| {
+            let aad = match prefix.kind {
+                AadKind::SystemInput => CiphertextBindingAad::SystemInput(
+                    decode_system_input_body(reader, prefix.version)?,
+                ),
+                AadKind::SystemHandle => CiphertextBindingAad::SystemHandle(
+                    decode_system_handle_body(reader, prefix.version)?,
+                ),
+                AadKind::Enclave => {
+                    CiphertextBindingAad::Enclave(decode_enclave_body(reader, prefix.version)?)
+                }
+                AadKind::Reader => {
+                    CiphertextBindingAad::Reader(decode_reader_body(reader, prefix.version)?)
+                }
+            };
+            Ok(aad)
+        })
     }
 }
 
 impl SystemInputAadV1 {
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        write_array_header(&mut out, AadKind::SystemInput.array_length());
-        write_uint(&mut out, 0, self.version as u64);
-        write_uint(&mut out, 0, AadKind::SystemInput.discriminant());
-        write_uint(&mut out, 0, self.chain_id);
+        write_aad_prefix(&mut out, AadKind::SystemInput, self.version);
+        write_unsigned_integer(&mut out, self.chain_id);
         write_byte_string(&mut out, &self.domain_id.0);
         write_byte_string(&mut out, &self.contract.0);
         write_text_string(&mut out, &self.type_tag);
@@ -228,23 +224,17 @@ impl SystemInputAadV1 {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, AadDecodeError> {
-        let mut reader = Reader::new(bytes);
-        let prefix = decode_prefix(&mut reader)?;
-        require_kind(AadKind::SystemInput, prefix.kind)?;
-        check_array_length(prefix.kind, prefix.array_len)?;
-        let body = decode_system_input_body(&mut reader, prefix.version)?;
-        ensure_consumed(&reader)?;
-        Ok(body)
+        decode_with_prefix(bytes, Some(AadKind::SystemInput), |reader, prefix| {
+            decode_system_input_body(reader, prefix.version)
+        })
     }
 }
 
 impl SystemHandleAadV1 {
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        write_array_header(&mut out, AadKind::SystemHandle.array_length());
-        write_uint(&mut out, 0, self.version as u64);
-        write_uint(&mut out, 0, AadKind::SystemHandle.discriminant());
-        write_uint(&mut out, 0, self.chain_id);
+        write_aad_prefix(&mut out, AadKind::SystemHandle, self.version);
+        write_unsigned_integer(&mut out, self.chain_id);
         write_byte_string(&mut out, &self.domain_id.0);
         write_byte_string(&mut out, &self.handle_id.0);
         write_text_string(&mut out, &self.type_tag);
@@ -253,23 +243,17 @@ impl SystemHandleAadV1 {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, AadDecodeError> {
-        let mut reader = Reader::new(bytes);
-        let prefix = decode_prefix(&mut reader)?;
-        require_kind(AadKind::SystemHandle, prefix.kind)?;
-        check_array_length(prefix.kind, prefix.array_len)?;
-        let body = decode_system_handle_body(&mut reader, prefix.version)?;
-        ensure_consumed(&reader)?;
-        Ok(body)
+        decode_with_prefix(bytes, Some(AadKind::SystemHandle), |reader, prefix| {
+            decode_system_handle_body(reader, prefix.version)
+        })
     }
 }
 
 impl EnclaveAadV1 {
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        write_array_header(&mut out, AadKind::Enclave.array_length());
-        write_uint(&mut out, 0, self.version as u64);
-        write_uint(&mut out, 0, AadKind::Enclave.discriminant());
-        write_uint(&mut out, 0, self.chain_id);
+        write_aad_prefix(&mut out, AadKind::Enclave, self.version);
+        write_unsigned_integer(&mut out, self.chain_id);
         write_byte_string(&mut out, &self.domain_id.0);
         write_byte_string(&mut out, &self.request_id.0);
         write_byte_string(&mut out, &self.handle_id.0);
@@ -280,23 +264,17 @@ impl EnclaveAadV1 {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, AadDecodeError> {
-        let mut reader = Reader::new(bytes);
-        let prefix = decode_prefix(&mut reader)?;
-        require_kind(AadKind::Enclave, prefix.kind)?;
-        check_array_length(prefix.kind, prefix.array_len)?;
-        let body = decode_enclave_body(&mut reader, prefix.version)?;
-        ensure_consumed(&reader)?;
-        Ok(body)
+        decode_with_prefix(bytes, Some(AadKind::Enclave), |reader, prefix| {
+            decode_enclave_body(reader, prefix.version)
+        })
     }
 }
 
 impl ReaderAadV1 {
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        write_array_header(&mut out, AadKind::Reader.array_length());
-        write_uint(&mut out, 0, self.version as u64);
-        write_uint(&mut out, 0, AadKind::Reader.discriminant());
-        write_uint(&mut out, 0, self.chain_id);
+        write_aad_prefix(&mut out, AadKind::Reader, self.version);
+        write_unsigned_integer(&mut out, self.chain_id);
         write_byte_string(&mut out, &self.domain_id.0);
         write_byte_string(&mut out, &self.request_id.0);
         write_byte_string(&mut out, &self.handle_id.0);
@@ -307,13 +285,9 @@ impl ReaderAadV1 {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, AadDecodeError> {
-        let mut reader = Reader::new(bytes);
-        let prefix = decode_prefix(&mut reader)?;
-        require_kind(AadKind::Reader, prefix.kind)?;
-        check_array_length(prefix.kind, prefix.array_len)?;
-        let body = decode_reader_body(&mut reader, prefix.version)?;
-        ensure_consumed(&reader)?;
-        Ok(body)
+        decode_with_prefix(bytes, Some(AadKind::Reader), |reader, prefix| {
+            decode_reader_body(reader, prefix.version)
+        })
     }
 }
 
@@ -414,6 +388,22 @@ struct Prefix {
     kind: AadKind,
 }
 
+fn decode_with_prefix<T>(
+    bytes: &[u8],
+    expected_kind: Option<AadKind>,
+    decode_body: impl FnOnce(&mut Reader<'_>, Prefix) -> Result<T, AadDecodeError>,
+) -> Result<T, AadDecodeError> {
+    let mut reader = Reader::new(bytes);
+    let prefix = decode_prefix(&mut reader)?;
+    if let Some(expected) = expected_kind {
+        require_kind(expected, prefix.kind)?;
+    }
+    check_array_length(prefix.kind, prefix.array_len)?;
+    let value = decode_body(&mut reader, prefix)?;
+    ensure_consumed(&reader)?;
+    Ok(value)
+}
+
 fn decode_prefix(reader: &mut Reader) -> Result<Prefix, AadDecodeError> {
     let (major, array_len) = reader.read_header().ok_or(AadDecodeError::Malformed)?;
     if major != MAJOR_ARRAY {
@@ -423,8 +413,7 @@ fn decode_prefix(reader: &mut Reader) -> Result<Prefix, AadDecodeError> {
     if vmajor != MAJOR_UINT {
         return Err(AadDecodeError::Malformed);
     }
-    let version =
-        u8::try_from(varg).map_err(|_| AadDecodeError::VersionOverflow(varg))?;
+    let version = u8::try_from(varg).map_err(|_| AadDecodeError::VersionOverflow(varg))?;
     let (kmajor, karg) = reader.read_header().ok_or(AadDecodeError::Malformed)?;
     if kmajor != MAJOR_UINT {
         return Err(AadDecodeError::Malformed);
@@ -498,7 +487,7 @@ fn read_fixed_bytes<const N: usize>(
             expected: "byte string",
         });
     }
-    let actual = arg as usize;
+    let actual = usize::try_from(arg).map_err(|_| AadDecodeError::Malformed)?;
     if actual != N {
         return Err(AadDecodeError::WrongByteStringLength {
             kind,
@@ -526,9 +515,10 @@ fn read_text_string(
             expected: "text string",
         });
     }
-    let payload = reader.take(arg as usize).ok_or(AadDecodeError::Malformed)?;
-    let text = std::str::from_utf8(payload)
-        .map_err(|_| AadDecodeError::InvalidUtf8 { kind, field })?;
+    let len = usize::try_from(arg).map_err(|_| AadDecodeError::Malformed)?;
+    let payload = reader.take(len).ok_or(AadDecodeError::Malformed)?;
+    let text =
+        std::str::from_utf8(payload).map_err(|_| AadDecodeError::InvalidUtf8 { kind, field })?;
     Ok(text.to_string())
 }
 
@@ -541,7 +531,17 @@ const MAJOR_BYTE_STRING: u8 = 2;
 const MAJOR_TEXT_STRING: u8 = 3;
 const MAJOR_ARRAY: u8 = 4;
 
-fn write_uint(out: &mut Vec<u8>, major: u8, value: u64) {
+fn write_aad_prefix(out: &mut Vec<u8>, kind: AadKind, version: u8) {
+    write_array_header(out, kind.array_length());
+    write_unsigned_integer(out, version as u64);
+    write_unsigned_integer(out, kind.discriminant());
+}
+
+fn write_unsigned_integer(out: &mut Vec<u8>, value: u64) {
+    write_cbor_header(out, MAJOR_UINT, value);
+}
+
+fn write_cbor_header(out: &mut Vec<u8>, major: u8, value: u64) {
     let head = major << 5;
     if value <= 23 {
         out.push(head | value as u8);
@@ -561,16 +561,16 @@ fn write_uint(out: &mut Vec<u8>, major: u8, value: u64) {
 }
 
 fn write_array_header(out: &mut Vec<u8>, len: usize) {
-    write_uint(out, MAJOR_ARRAY, len as u64);
+    write_cbor_header(out, MAJOR_ARRAY, len as u64);
 }
 
 fn write_byte_string(out: &mut Vec<u8>, bytes: &[u8]) {
-    write_uint(out, MAJOR_BYTE_STRING, bytes.len() as u64);
+    write_cbor_header(out, MAJOR_BYTE_STRING, bytes.len() as u64);
     out.extend_from_slice(bytes);
 }
 
 fn write_text_string(out: &mut Vec<u8>, text: &str) {
-    write_uint(out, MAJOR_TEXT_STRING, text.len() as u64);
+    write_cbor_header(out, MAJOR_TEXT_STRING, text.len() as u64);
     out.extend_from_slice(text.as_bytes());
 }
 

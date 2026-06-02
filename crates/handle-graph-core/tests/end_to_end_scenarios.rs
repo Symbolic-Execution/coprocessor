@@ -188,7 +188,11 @@ fn select_scenario_preserves_predicate_when_true_when_false_order_through_readin
     );
     assert_eq!(
         entry.input_system_ciphertexts,
-        vec![predicate_ciphertext, when_true_ciphertext, when_false_ciphertext],
+        vec![
+            predicate_ciphertext,
+            when_true_ciphertext,
+            when_false_ciphertext
+        ],
         "Select readiness must align input ciphertexts with the ordered input handle keys"
     );
 
@@ -211,9 +215,24 @@ fn invalid_derived_operations_record_failed_records_and_never_reach_readiness() 
     let suint_a = handle_key(1, 7, 1);
     let suint_b = handle_key(1, 7, 2);
     let sbool_input = handle_key(1, 7, 3);
-    seed_imported(&mut core, suint_a, HandleType::Suint256, chain_event_ref(1, 1, 1));
-    seed_imported(&mut core, suint_b, HandleType::Suint256, chain_event_ref(1, 1, 2));
-    seed_imported(&mut core, sbool_input, HandleType::Sbool, chain_event_ref(1, 1, 3));
+    seed_imported(
+        &mut core,
+        suint_a,
+        HandleType::Suint256,
+        chain_event_ref(1, 1, 1),
+    );
+    seed_imported(
+        &mut core,
+        suint_b,
+        HandleType::Suint256,
+        chain_event_ref(1, 1, 2),
+    );
+    seed_imported(
+        &mut core,
+        sbool_input,
+        HandleType::Sbool,
+        chain_event_ref(1, 1, 3),
+    );
 
     let unknown_input = handle_key(1, 7, 99);
     let lineage_violation = handle_key(1, 7, 40);
@@ -382,7 +401,12 @@ fn replayed_chain_events_are_idempotent_across_source_and_derived_ingestion() {
 fn unknown_handle_key_is_reported_unknown_on_both_canonical_and_audit_paths() {
     let mut core = HandleGraphCore::new();
     let seeded = handle_key(1, 7, 1);
-    seed_imported(&mut core, seeded, HandleType::Suint256, chain_event_ref(1, 1, 1));
+    seed_imported(
+        &mut core,
+        seeded,
+        HandleType::Suint256,
+        chain_event_ref(1, 1, 1),
+    );
 
     let unknown = handle_key(1, 7, 99);
     let unknown_other_chain = handle_key(2, 7, 1);
@@ -610,8 +634,7 @@ fn full_graph_lifecycle_combines_ingestion_validation_readiness_and_orphan_disca
         .expect("valid Add derived must be reported ready");
     assert_eq!(entry.input_handle_keys, vec![imported_a, imported_b]);
     assert_eq!(
-        entry.input_system_ciphertexts[0],
-        imported_a_ciphertext,
+        entry.input_system_ciphertexts[0], imported_a_ciphertext,
         "Resolution Readiness must echo the original imported ciphertext"
     );
     assert!(
