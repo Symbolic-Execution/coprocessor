@@ -6,3 +6,6 @@ edition = "2021"
 [lib]
 name = "coprocessor_handle_graph_core"
 path = "src/lib.rs"
+
+[dependencies]
+coprocessor-ciphertext-binding = { path = "../ciphertext-binding" }

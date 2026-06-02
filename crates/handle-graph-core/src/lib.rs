@@ -5,10 +5,15 @@ pub mod persistence;
 pub use persistence::{HandlePersistence, InMemoryHandlePersistence};
 
 mod chain_log_decoder;
+mod plaintext_materialization;
 
 pub use chain_log_decoder::{
     decode_chain_log, ChainLog, ChainLogDecodeError, HANDLE_FROM_PLAINTEXT_V1_SIGNATURE,
     HANDLE_IMPORTED_V1_SIGNATURE, OPERATION_REQUESTED_V1_SIGNATURE,
+};
+pub use plaintext_materialization::{
+    type_tag_for_handle_type, MaterializedPlaintextHandle, PlaintextMaterializer, SBOOL_TYPE_TAG,
+    SUINT256_TYPE_TAG,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -209,11 +214,25 @@ pub struct ResolutionReadiness {
 pub struct HandleGraphCore {
     records: HashMap<HandleKey, HandleRecord>,
     consumed_events: HashSet<ChainEventRef>,
+    plaintext_materializer: PlaintextMaterializer,
 }
 
 impl HandleGraphCore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Construct a [`HandleGraphCore`] that materializes Plaintext Handles
+    /// through `plaintext_materializer`. The host populates the materializer
+    /// from the MPC public configuration's active `key_id` before any
+    /// Plaintext Handle ingestion happens, so every Ready Plaintext Handle
+    /// carries an AAD bound to the currently-active MPC key.
+    pub fn with_plaintext_materializer(plaintext_materializer: PlaintextMaterializer) -> Self {
+        Self {
+            records: HashMap::new(),
+            consumed_events: HashSet::new(),
+            plaintext_materializer,
+        }
     }
 
     pub fn apply_chain_event(&mut self, event: ChainEvent) -> IngestionOutcome {
@@ -266,7 +285,26 @@ impl HandleGraphCore {
     /// re-seeds the in-process record map and the consumed-event set, so
     /// ingestion replay remains idempotent by [`ChainEventRef`] and canonical
     /// reads return the same Handle Records observed before the restart.
+    ///
+    /// The restored graph uses [`PlaintextMaterializer::default`]; callers
+    /// that subsequently ingest Plaintext Handle events should construct the
+    /// graph with [`HandleGraphCore::restore_from_persistence_with_materializer`]
+    /// so the materializer carries the host's active MPC key id.
     pub fn restore_from_persistence<P: HandlePersistence>(persistence: &P) -> Self {
+        Self::restore_from_persistence_with_materializer(
+            persistence,
+            PlaintextMaterializer::default(),
+        )
+    }
+
+    /// Same as [`HandleGraphCore::restore_from_persistence`], but binds the
+    /// supplied `plaintext_materializer` so post-restart Plaintext Handle
+    /// ingestion keeps producing real `SystemCiphertextV1` envelopes bound to
+    /// the host's active MPC key id.
+    pub fn restore_from_persistence_with_materializer<P: HandlePersistence>(
+        persistence: &P,
+        plaintext_materializer: PlaintextMaterializer,
+    ) -> Self {
         let records: HashMap<HandleKey, HandleRecord> = persistence
             .handle_records()
             .into_iter()
@@ -276,6 +314,7 @@ impl HandleGraphCore {
         Self {
             records,
             consumed_events,
+            plaintext_materializer,
         }
     }
 
@@ -489,8 +528,10 @@ impl HandleGraphCore {
             return outcome;
         }
 
-        let system_ciphertext = placeholder_plaintext_system_ciphertext(&plaintext);
-        let materialization_receipt = placeholder_plaintext_receipt(&plaintext);
+        let MaterializedPlaintextHandle {
+            system_ciphertext,
+            materialization_receipt,
+        } = self.plaintext_materializer.materialize(&plaintext);
         let record = HandleRecord {
             domain_id: plaintext.domain_id,
             handle_key: plaintext.handle_key,
@@ -609,18 +650,6 @@ impl ChainEvent {
             ChainEvent::DerivedHandleOperation(op) => op.event_ref,
         }
     }
-}
-
-fn placeholder_plaintext_system_ciphertext(plaintext: &PlaintextHandle) -> SystemCiphertextV1 {
-    let mut bytes = b"plaintext-system-ciphertext-v1-placeholder:".to_vec();
-    bytes.extend_from_slice(&plaintext.handle_key.handle_id.0);
-    SystemCiphertextV1(bytes)
-}
-
-fn placeholder_plaintext_receipt(plaintext: &PlaintextHandle) -> MaterializationReceipt {
-    let mut bytes = b"plaintext-materialization-receipt-v1-placeholder:".to_vec();
-    bytes.extend_from_slice(&plaintext.handle_key.handle_id.0);
-    MaterializationReceipt(bytes)
 }
 
 fn expected_arity(op: OperationCode) -> usize {
