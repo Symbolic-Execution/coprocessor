@@ -213,7 +213,6 @@ export async function runIssueWorkflow(options: {
           promptFile: "./.sandcastle/review-prompt.md",
           promptArgs: {
             BRANCH: issue.branch,
-            TARGET_BRANCH: defaultBranch,
           },
         });
 
@@ -402,7 +401,7 @@ async function syncIssueBranchWithDefault(options: {
         TASK_ID: issue.id,
         ISSUE_TITLE: issue.title,
         BRANCH: issue.branch,
-        TARGET_BRANCH: defaultBranch,
+        DEFAULT_BRANCH: defaultBranch,
         CONFLICTED_FILES: conflicts.join("\n"),
       },
     });

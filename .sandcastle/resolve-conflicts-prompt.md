@@ -3,7 +3,7 @@
 Resolve merge conflicts on branch `{{BRANCH}}` for issue {{TASK_ID}}:
 {{ISSUE_TITLE}}
 
-The branch is currently in the middle of merging `origin/{{TARGET_BRANCH}}`.
+The branch is currently in the middle of merging `origin/{{DEFAULT_BRANCH}}`.
 Your job is only to finish that merge safely.
 
 # CONFLICTED FILES
@@ -17,15 +17,15 @@ Your job is only to finish that merge safely.
 - Do not implement new feature work.
 - Do not refactor unrelated code.
 - Preserve both sides' intent: keep the issue branch behavior and keep the
-  latest `origin/{{TARGET_BRANCH}}` behavior.
+  latest `origin/{{DEFAULT_BRANCH}}` behavior.
 - When manifests, lockfiles, workspace members, or generated metadata conflict,
   include both valid additions and regenerate metadata with the repo's normal
   tooling when needed.
 - Resolve conflicts through the smallest correct edits.
-- Never discard `origin/{{TARGET_BRANCH}}` changes just to make the conflict go
+- Never discard `origin/{{DEFAULT_BRANCH}}` changes just to make the conflict go
   away.
 - Never discard issue-branch changes unless they are truly superseded by
-  equivalent code already on `origin/{{TARGET_BRANCH}}`.
+  equivalent code already on `origin/{{DEFAULT_BRANCH}}`.
 
 # EXECUTION
 
