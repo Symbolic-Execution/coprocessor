@@ -3,5 +3,9 @@
 version = 4
 
 [[package]]
+name = "coprocessor-ciphertext-binding"
+version = "0.1.0"
+
+[[package]]
 name = "coprocessor-handle-graph-core"
 version = "0.1.0"

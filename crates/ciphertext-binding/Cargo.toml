@@ -1,0 +1,8 @@
+[package]
+name = "coprocessor-ciphertext-binding"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "coprocessor_ciphertext_binding"
+path = "src/lib.rs"
