@@ -30,6 +30,11 @@ mod resolution_intent;
 use resolution_intent::ResolutionIntents;
 pub use resolution_intent::{RequestId, ResolutionIntent};
 
+mod resolution_scheduler;
+
+use resolution_scheduler::ResolutionTaskClaims;
+pub use resolution_scheduler::ResolutionTask;
+
 const ALL_DEPENDENCIES: [DependencyName; 3] = [
     DependencyName::SymVmEventSurface,
     DependencyName::Mpc,
@@ -138,6 +143,10 @@ pub struct CoprocessorHost {
     available_dependencies: BTreeSet<DependencyName>,
     /// Handle Resolution Request attachments grouped by Handle Key.
     resolution_intents: ResolutionIntents,
+    /// Resolution Scheduler claims grouped by Handle Key. A claim records
+    /// that the scheduler has dispatched a Resolution Task for a Pending
+    /// Derived Handle so duplicate scheduler ticks do not re-dispatch it.
+    resolution_claims: ResolutionTaskClaims,
 }
 
 impl CoprocessorHost {
@@ -203,6 +212,7 @@ impl CoprocessorHost {
             lifecycle: LifecycleState::NotStarted,
             available_dependencies: BTreeSet::new(),
             resolution_intents: ResolutionIntents::default(),
+            resolution_claims: ResolutionTaskClaims::default(),
         }
     }
 
@@ -334,6 +344,41 @@ impl CoprocessorHost {
     /// this count.
     pub fn pending_resolution_intent_count(&self) -> usize {
         self.resolution_intents.len()
+    }
+
+    /// Resolution Scheduler tick: claim a [`ResolutionTask`] for every
+    /// Resolution Readiness entry that does not already have an active claim
+    /// for its Handle Key. Returns the freshly claimed tasks; Handle Keys
+    /// already claimed by an earlier tick are skipped, so duplicate ticks are
+    /// idempotent.
+    ///
+    /// Claims do not move Handle Graph state: the underlying Pending Derived
+    /// Handle stays Pending while the task is in flight, and a future host
+    /// slice will mark it Ready or Failed when MPC and Enclave Execution
+    /// return. Repeated Resolve Handle Requests during a claim continue to
+    /// observe Pending and attach to the same [`ResolutionIntent`].
+    pub fn claim_resolution_tasks(&mut self) -> Vec<ResolutionTask> {
+        self.resolution_claims
+            .claim_from_readiness(&self.handle_graph_core)
+    }
+
+    /// True when a Resolution Task is currently claimed for `handle_key`.
+    pub fn is_resolution_task_claimed(&self, handle_key: &HandleKey) -> bool {
+        self.resolution_claims.is_claimed(handle_key)
+    }
+
+    /// Number of distinct Handle Keys that currently have an active
+    /// Resolution Task claim.
+    pub fn claimed_resolution_task_count(&self) -> usize {
+        self.resolution_claims.count()
+    }
+
+    /// Release the active Resolution Task claim for `handle_key`. Returns
+    /// `true` if a claim was released, `false` if no claim existed. Used by
+    /// the resolution-result path in a later slice so the same Handle Key
+    /// becomes eligible again only after the in-flight work returns.
+    pub fn release_resolution_task(&mut self, handle_key: &HandleKey) -> bool {
+        self.resolution_claims.release(handle_key)
     }
 
     fn project_handle_state(&self, handle_key: &HandleKey) -> HandleStateView {
