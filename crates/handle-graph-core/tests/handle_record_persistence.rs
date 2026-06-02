@@ -295,6 +295,182 @@ fn tombstone_persists_and_canonical_reads_remain_hidden_after_restart() {
 }
 
 #[test]
+fn cascade_tombstone_persists_and_remains_hidden_from_canonical_reads_after_restart() {
+    // Issue #33 acceptance: cascade tombstone flags persist durably. Tombstoning
+    // an Imported source must cascade through Handle Lineage, and the cascaded
+    // Derived record must remain tombstoned in canonical reads after the
+    // Handle Graph Core is rehydrated from persistence.
+    let mut core = HandleGraphCore::new();
+    let mut store = InMemoryHandlePersistence::new();
+    let a = handle_key(1, 7, 100);
+    let b = handle_key(1, 7, 101);
+    let a_event_ref = chain_event_ref(1, 1, 1);
+    let _ = expect_recorded(core.apply_chain_event_with_persistence(
+        imported_event(
+            a,
+            HandleType::Suint256,
+            a_event_ref,
+            SystemCiphertextV1(vec![1]),
+            MaterializationReceipt(vec![2]),
+        ),
+        &mut store,
+    ));
+    let _ = expect_recorded(core.apply_chain_event_with_persistence(
+        imported_event(
+            b,
+            HandleType::Suint256,
+            chain_event_ref(1, 1, 2),
+            SystemCiphertextV1(vec![3]),
+            MaterializationReceipt(vec![4]),
+        ),
+        &mut store,
+    ));
+    let derived = handle_key(1, 7, 102);
+    let derived_event_ref = chain_event_ref(1, 2, 1);
+    let _ = expect_recorded(core.apply_chain_event_with_persistence(
+        derived_event(
+            derived,
+            OperationCode::Add,
+            HandleType::Suint256,
+            vec![a, b],
+            derived_event_ref,
+        ),
+        &mut store,
+    ));
+
+    let outcome = core.apply_orphan_discard_with_persistence(&[a_event_ref], &mut store);
+    assert_eq!(outcome.directly_tombstoned, vec![a]);
+    assert_eq!(
+        outcome.cascade_tombstoned,
+        vec![derived],
+        "precondition: orphan discard must cascade through derived handle"
+    );
+
+    drop(core);
+    let restored = HandleGraphCore::restore_from_persistence(&store);
+
+    assert!(
+        restored.canonical_handle(&a).is_none(),
+        "directly-tombstoned source must remain hidden from canonical reads after restart"
+    );
+    assert!(
+        restored.canonical_handle(&derived).is_none(),
+        "cascade-tombstoned derived must remain hidden from canonical reads after restart"
+    );
+    let audit_a = restored
+        .handle_record_for_audit(&a)
+        .expect("directly-tombstoned source retained for audit after restart");
+    assert!(audit_a.is_tombstoned);
+    let audit_derived = restored
+        .handle_record_for_audit(&derived)
+        .expect("cascade-tombstoned derived retained for audit after restart");
+    assert!(
+        audit_derived.is_tombstoned,
+        "cascade tombstone flag must be persisted"
+    );
+}
+
+#[test]
+fn tombstoned_record_audit_preserves_chain_event_ref_lineage_and_state_after_restart() {
+    // Issue #33 acceptance: audit/debug queries can inspect tombstoned records
+    // with original ChainEventRef, lineage, and state — including after the
+    // Handle Graph Core is rehydrated from persistence.
+    let mut core = HandleGraphCore::new();
+    let mut store = InMemoryHandlePersistence::new();
+    let a = handle_key(1, 7, 110);
+    let b = handle_key(1, 7, 111);
+    let a_event_ref = chain_event_ref(1, 1, 1);
+    let imported_ciphertext = SystemCiphertextV1(vec![0xAA, 0xBB]);
+    let imported_receipt = MaterializationReceipt(vec![0xCC, 0xDD]);
+    let _ = expect_recorded(core.apply_chain_event_with_persistence(
+        imported_event(
+            a,
+            HandleType::Suint256,
+            a_event_ref,
+            imported_ciphertext.clone(),
+            imported_receipt.clone(),
+        ),
+        &mut store,
+    ));
+    let _ = expect_recorded(core.apply_chain_event_with_persistence(
+        imported_event(
+            b,
+            HandleType::Suint256,
+            chain_event_ref(1, 1, 2),
+            SystemCiphertextV1(vec![3]),
+            MaterializationReceipt(vec![4]),
+        ),
+        &mut store,
+    ));
+    let derived = handle_key(1, 7, 112);
+    let derived_event_ref = chain_event_ref(1, 2, 1);
+    let _ = expect_recorded(core.apply_chain_event_with_persistence(
+        derived_event(
+            derived,
+            OperationCode::Add,
+            HandleType::Suint256,
+            vec![a, b],
+            derived_event_ref,
+        ),
+        &mut store,
+    ));
+
+    // Tombstone the source: cascades to the derived handle.
+    let _ = core.apply_orphan_discard_with_persistence(&[a_event_ref], &mut store);
+
+    drop(core);
+    let restored = HandleGraphCore::restore_from_persistence(&store);
+
+    // Directly-tombstoned imported source: preserved Ready state, lineage, and
+    // ChainEventRef survive restart.
+    let audit_a = restored
+        .handle_record_for_audit(&a)
+        .expect("audit must expose directly-tombstoned source after restart");
+    assert_eq!(
+        audit_a.event_ref, a_event_ref,
+        "audit must preserve original ChainEventRef after restart"
+    );
+    assert_eq!(
+        audit_a.lineage,
+        HandleLineage::Source,
+        "audit must preserve original lineage after restart"
+    );
+    assert_eq!(
+        audit_a.state,
+        HandleState::Ready {
+            system_ciphertext: imported_ciphertext,
+            materialization_receipt: imported_receipt,
+        },
+        "audit must preserve original Handle State after restart"
+    );
+    assert!(audit_a.is_tombstoned);
+
+    // Cascade-tombstoned derived: preserved Pending state, derived lineage, and
+    // its own ChainEventRef survive restart.
+    let audit_derived = restored
+        .handle_record_for_audit(&derived)
+        .expect("audit must expose cascade-tombstoned derived after restart");
+    assert_eq!(
+        audit_derived.event_ref, derived_event_ref,
+        "audit must preserve derived's original ChainEventRef after restart"
+    );
+    assert_eq!(
+        audit_derived.lineage,
+        HandleLineage::Derived {
+            operation_code: OperationCode::Add,
+            input_handle_keys: vec![a, b],
+        },
+        "audit must preserve derived lineage after restart"
+    );
+    assert_eq!(
+        audit_derived.state,
+        HandleState::Pending,
+        "audit must preserve derived's original Handle State after restart"
+    );
+    assert!(audit_derived.is_tombstoned);
+}
+
+#[test]
 fn duplicate_rejected_record_is_not_persisted_but_event_is_marked_consumed() {
     let mut core = HandleGraphCore::new();
     let mut store = InMemoryHandlePersistence::new();
