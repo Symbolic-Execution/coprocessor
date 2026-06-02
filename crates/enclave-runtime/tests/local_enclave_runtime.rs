@@ -301,18 +301,440 @@ fn task_attestation_mismatch_surfaces_attestation_error() {
 }
 
 #[test]
-fn unsupported_operation_surfaces_operation_not_supported() {
+fn unsupported_operation_output_type_pair_surfaces_operation_not_supported() {
+    // The local Enclave evaluates every OperationCode in the spec's initial
+    // surface, but only against the operation's well-typed output. `Add` over
+    // an `Sbool` output Handle is a malformed task and must surface as
+    // OperationNotSupported without touching plaintext.
     let runtime = runtime();
     let (mut task, _) = add_task(&runtime, 1, 2);
-    task.operation_code = OperationCode::Or;
+    task.output_handle_type = HandleType::Sbool;
 
     let err = runtime
         .execute(&task)
-        .expect_err("Or is not in the supported path for the local enclave");
+        .expect_err("Add with Sbool output is not a valid (op, type) pair");
 
     assert_eq!(
         err,
-        EnclaveExecutionError::OperationNotSupported(OperationCode::Or)
+        EnclaveExecutionError::OperationNotSupported(OperationCode::Add)
+    );
+}
+
+// ----------------------------------------------------------------------------
+// Full OperationCode surface: arithmetic, comparison, boolean, and Select.
+// Each test drives the runtime through the public `EnclaveRuntime` trait,
+// builds inputs via test-only sealing helpers, and recovers results via the
+// test-only unseal helpers. Plaintext never crosses the trait surface.
+// ----------------------------------------------------------------------------
+
+fn suint256_binop_task(
+    runtime: &LocalEnclaveRuntime,
+    op: OperationCode,
+    output_type: HandleType,
+    lhs: [u8; 32],
+    rhs: [u8; 32],
+) -> ResolutionTask {
+    let req = request_id();
+    let lhs_key = handle_key(1);
+    let rhs_key = handle_key(2);
+    let out_key = handle_key(3);
+
+    let lhs_ct = runtime.seal_suint256_input(req, lhs_key, lhs);
+    let rhs_ct = runtime.seal_suint256_input(req, rhs_key, rhs);
+
+    ResolutionTask {
+        request_id: req,
+        attestation_digest: TEST_ATTESTATION,
+        output_handle_key: out_key,
+        operation_code: op,
+        output_handle_type: output_type,
+        input_handle_keys: vec![lhs_key, rhs_key],
+        input_ciphertexts: vec![lhs_ct, rhs_ct],
+    }
+}
+
+fn sbool_binop_task(
+    runtime: &LocalEnclaveRuntime,
+    op: OperationCode,
+    lhs: bool,
+    rhs: bool,
+) -> ResolutionTask {
+    let req = request_id();
+    let lhs_key = handle_key(1);
+    let rhs_key = handle_key(2);
+    let out_key = handle_key(3);
+
+    let lhs_ct = runtime.seal_sbool_input(req, lhs_key, lhs);
+    let rhs_ct = runtime.seal_sbool_input(req, rhs_key, rhs);
+
+    ResolutionTask {
+        request_id: req,
+        attestation_digest: TEST_ATTESTATION,
+        output_handle_key: out_key,
+        operation_code: op,
+        output_handle_type: HandleType::Sbool,
+        input_handle_keys: vec![lhs_key, rhs_key],
+        input_ciphertexts: vec![lhs_ct, rhs_ct],
+    }
+}
+
+fn run_and_unseal_suint256(
+    runtime: &LocalEnclaveRuntime,
+    task: &ResolutionTask,
+) -> [u8; 32] {
+    let outcome = runtime
+        .execute(task)
+        .expect("well-formed task must succeed");
+    runtime
+        .unseal_suint256_output(&outcome.system_ciphertext)
+        .expect("output must unseal as suint256")
+}
+
+fn run_and_unseal_sbool(runtime: &LocalEnclaveRuntime, task: &ResolutionTask) -> bool {
+    let outcome = runtime
+        .execute(task)
+        .expect("well-formed task must succeed");
+    runtime
+        .unseal_sbool_output(&outcome.system_ciphertext)
+        .expect("output must unseal as sbool")
+}
+
+#[test]
+fn evaluates_suint256_sub_with_wrapping_semantics() {
+    // 2^256-modular subtraction: spec says `suint256` arithmetic is wrapping.
+    // The test covers a non-wrapping case AND the wrap-around (0 - 1 = 2^256-1).
+    let runtime = runtime();
+
+    let task = suint256_binop_task(
+        &runtime,
+        OperationCode::Sub,
+        HandleType::Suint256,
+        u256_from_u64(10),
+        u256_from_u64(3),
+    );
+    assert_eq!(run_and_unseal_suint256(&runtime, &task), u256_from_u64(7));
+
+    let zero = u256_from_u64(0);
+    let one = u256_from_u64(1);
+    let wrap_task = suint256_binop_task(
+        &runtime,
+        OperationCode::Sub,
+        HandleType::Suint256,
+        zero,
+        one,
+    );
+    assert_eq!(run_and_unseal_suint256(&runtime, &wrap_task), [0xFF; 32]);
+}
+
+#[test]
+fn evaluates_suint256_eq_to_sbool() {
+    let runtime = runtime();
+    let eq_task = suint256_binop_task(
+        &runtime,
+        OperationCode::Eq,
+        HandleType::Sbool,
+        u256_from_u64(42),
+        u256_from_u64(42),
+    );
+    assert!(run_and_unseal_sbool(&runtime, &eq_task));
+
+    let ne_task = suint256_binop_task(
+        &runtime,
+        OperationCode::Eq,
+        HandleType::Sbool,
+        u256_from_u64(42),
+        u256_from_u64(43),
+    );
+    assert!(!run_and_unseal_sbool(&runtime, &ne_task));
+}
+
+#[test]
+fn evaluates_suint256_lt_to_sbool() {
+    let runtime = runtime();
+    for (lhs, rhs, expected) in [(3u64, 4u64, true), (4, 4, false), (5, 4, false)] {
+        let task = suint256_binop_task(
+            &runtime,
+            OperationCode::Lt,
+            HandleType::Sbool,
+            u256_from_u64(lhs),
+            u256_from_u64(rhs),
+        );
+        assert_eq!(run_and_unseal_sbool(&runtime, &task), expected);
+    }
+}
+
+#[test]
+fn evaluates_suint256_lte_to_sbool() {
+    let runtime = runtime();
+    for (lhs, rhs, expected) in [(3u64, 4u64, true), (4, 4, true), (5, 4, false)] {
+        let task = suint256_binop_task(
+            &runtime,
+            OperationCode::Lte,
+            HandleType::Sbool,
+            u256_from_u64(lhs),
+            u256_from_u64(rhs),
+        );
+        assert_eq!(run_and_unseal_sbool(&runtime, &task), expected);
+    }
+}
+
+#[test]
+fn evaluates_suint256_gt_to_sbool() {
+    let runtime = runtime();
+    for (lhs, rhs, expected) in [(3u64, 4u64, false), (4, 4, false), (5, 4, true)] {
+        let task = suint256_binop_task(
+            &runtime,
+            OperationCode::Gt,
+            HandleType::Sbool,
+            u256_from_u64(lhs),
+            u256_from_u64(rhs),
+        );
+        assert_eq!(run_and_unseal_sbool(&runtime, &task), expected);
+    }
+}
+
+#[test]
+fn evaluates_suint256_gte_to_sbool() {
+    let runtime = runtime();
+    for (lhs, rhs, expected) in [(3u64, 4u64, false), (4, 4, true), (5, 4, true)] {
+        let task = suint256_binop_task(
+            &runtime,
+            OperationCode::Gte,
+            HandleType::Sbool,
+            u256_from_u64(lhs),
+            u256_from_u64(rhs),
+        );
+        assert_eq!(run_and_unseal_sbool(&runtime, &task), expected);
+    }
+}
+
+#[test]
+fn evaluates_sbool_and_or_truth_tables() {
+    let runtime = runtime();
+    for (a, b) in [(false, false), (false, true), (true, false), (true, true)] {
+        let and_task = sbool_binop_task(&runtime, OperationCode::And, a, b);
+        assert_eq!(run_and_unseal_sbool(&runtime, &and_task), a && b);
+
+        let or_task = sbool_binop_task(&runtime, OperationCode::Or, a, b);
+        assert_eq!(run_and_unseal_sbool(&runtime, &or_task), a || b);
+    }
+}
+
+#[test]
+fn evaluates_sbool_not_unary() {
+    let runtime = runtime();
+    let req = request_id();
+    let in_key = handle_key(1);
+    let out_key = handle_key(2);
+
+    for value in [false, true] {
+        let ct = runtime.seal_sbool_input(req, in_key, value);
+        let task = ResolutionTask {
+            request_id: req,
+            attestation_digest: TEST_ATTESTATION,
+            output_handle_key: out_key,
+            operation_code: OperationCode::Not,
+            output_handle_type: HandleType::Sbool,
+            input_handle_keys: vec![in_key],
+            input_ciphertexts: vec![ct],
+        };
+        assert_eq!(run_and_unseal_sbool(&runtime, &task), !value);
+    }
+}
+
+#[test]
+fn evaluates_select_for_suint256_branches_preserving_order() {
+    // Select takes (predicate sbool, when_true, when_false) in that order. The
+    // local Enclave evaluates both branches inside the boundary and only
+    // releases the chosen ciphertext through a SystemCiphertextV1 — host code
+    // cannot tell which branch was selected from the encrypted envelope.
+    let runtime = runtime();
+    let req = request_id();
+    let pred_key = handle_key(1);
+    let true_key = handle_key(2);
+    let false_key = handle_key(3);
+    let out_key = handle_key(4);
+
+    let when_true = u256_from_u64(0xAAAA);
+    let when_false = u256_from_u64(0x5555);
+
+    let build_task = |predicate: bool| {
+        let pred_ct = runtime.seal_sbool_input(req, pred_key, predicate);
+        let true_ct = runtime.seal_suint256_input(req, true_key, when_true);
+        let false_ct = runtime.seal_suint256_input(req, false_key, when_false);
+        ResolutionTask {
+            request_id: req,
+            attestation_digest: TEST_ATTESTATION,
+            output_handle_key: out_key,
+            operation_code: OperationCode::Select,
+            output_handle_type: HandleType::Suint256,
+            input_handle_keys: vec![pred_key, true_key, false_key],
+            input_ciphertexts: vec![pred_ct, true_ct, false_ct],
+        }
+    };
+
+    let true_task = build_task(true);
+    let true_outcome = runtime
+        .execute(&true_task)
+        .expect("Select with true predicate must succeed");
+    assert_eq!(
+        runtime
+            .unseal_suint256_output(&true_outcome.system_ciphertext)
+            .expect("output must unseal"),
+        when_true,
+    );
+    // The host-visible ciphertext bytes do not contain either branch's plaintext.
+    assert!(!contains_subslice(
+        &true_outcome.system_ciphertext.ciphertext,
+        &when_true,
+    ));
+    assert!(!contains_subslice(
+        &true_outcome.system_ciphertext.ciphertext,
+        &when_false,
+    ));
+
+    let false_task = build_task(false);
+    let false_outcome = runtime
+        .execute(&false_task)
+        .expect("Select with false predicate must succeed");
+    assert_eq!(
+        runtime
+            .unseal_suint256_output(&false_outcome.system_ciphertext)
+            .expect("output must unseal"),
+        when_false,
+    );
+}
+
+#[test]
+fn evaluates_select_for_sbool_branches() {
+    let runtime = runtime();
+    let req = request_id();
+    let pred_key = handle_key(1);
+    let true_key = handle_key(2);
+    let false_key = handle_key(3);
+    let out_key = handle_key(4);
+
+    for (predicate, expected) in [(true, true), (false, false)] {
+        let pred_ct = runtime.seal_sbool_input(req, pred_key, predicate);
+        let true_ct = runtime.seal_sbool_input(req, true_key, true);
+        let false_ct = runtime.seal_sbool_input(req, false_key, false);
+        let task = ResolutionTask {
+            request_id: req,
+            attestation_digest: TEST_ATTESTATION,
+            output_handle_key: out_key,
+            operation_code: OperationCode::Select,
+            output_handle_type: HandleType::Sbool,
+            input_handle_keys: vec![pred_key, true_key, false_key],
+            input_ciphertexts: vec![pred_ct, true_ct, false_ct],
+        };
+        assert_eq!(run_and_unseal_sbool(&runtime, &task), expected);
+    }
+}
+
+#[test]
+fn sbool_operation_rejects_suint256_typed_input() {
+    // The position-aware type check: `And` expects both inputs to bind the
+    // `sbool` type tag. An suint256-sealed input at index 1 must surface as a
+    // TypeTag mismatch at that position.
+    let runtime = runtime();
+    let req = request_id();
+    let lhs_key = handle_key(1);
+    let rhs_key = handle_key(2);
+    let out_key = handle_key(3);
+
+    let lhs_ct = runtime.seal_sbool_input(req, lhs_key, true);
+    let rhs_ct = runtime.seal_suint256_input(req, rhs_key, u256_from_u64(1));
+
+    let task = ResolutionTask {
+        request_id: req,
+        attestation_digest: TEST_ATTESTATION,
+        output_handle_key: out_key,
+        operation_code: OperationCode::And,
+        output_handle_type: HandleType::Sbool,
+        input_handle_keys: vec![lhs_key, rhs_key],
+        input_ciphertexts: vec![lhs_ct, rhs_ct],
+    };
+
+    let err = runtime
+        .execute(&task)
+        .expect_err("wrong typed input at index 1 must reject");
+    assert_eq!(
+        err,
+        EnclaveExecutionError::InputAadVerificationFailed {
+            input_index: 1,
+            field: InputAadField::TypeTag,
+        }
+    );
+}
+
+#[test]
+fn select_rejects_sbool_predicate_typed_as_suint256() {
+    // Position-aware type check for Select: index 0 must be the sbool
+    // predicate. An suint256-sealed input there must surface as a TypeTag
+    // mismatch at position 0.
+    let runtime = runtime();
+    let req = request_id();
+    let pred_key = handle_key(1);
+    let true_key = handle_key(2);
+    let false_key = handle_key(3);
+    let out_key = handle_key(4);
+
+    let pred_ct = runtime.seal_suint256_input(req, pred_key, u256_from_u64(1));
+    let true_ct = runtime.seal_suint256_input(req, true_key, u256_from_u64(0xAA));
+    let false_ct = runtime.seal_suint256_input(req, false_key, u256_from_u64(0x55));
+
+    let task = ResolutionTask {
+        request_id: req,
+        attestation_digest: TEST_ATTESTATION,
+        output_handle_key: out_key,
+        operation_code: OperationCode::Select,
+        output_handle_type: HandleType::Suint256,
+        input_handle_keys: vec![pred_key, true_key, false_key],
+        input_ciphertexts: vec![pred_ct, true_ct, false_ct],
+    };
+
+    let err = runtime
+        .execute(&task)
+        .expect_err("non-sbool predicate must reject");
+    assert_eq!(
+        err,
+        EnclaveExecutionError::InputAadVerificationFailed {
+            input_index: 0,
+            field: InputAadField::TypeTag,
+        }
+    );
+}
+
+#[test]
+fn not_with_two_inputs_surfaces_input_count_mismatch() {
+    let runtime = runtime();
+    let req = request_id();
+    let a_key = handle_key(1);
+    let b_key = handle_key(2);
+    let out_key = handle_key(3);
+
+    let a_ct = runtime.seal_sbool_input(req, a_key, true);
+    let b_ct = runtime.seal_sbool_input(req, b_key, false);
+
+    let task = ResolutionTask {
+        request_id: req,
+        attestation_digest: TEST_ATTESTATION,
+        output_handle_key: out_key,
+        operation_code: OperationCode::Not,
+        output_handle_type: HandleType::Sbool,
+        input_handle_keys: vec![a_key, b_key],
+        input_ciphertexts: vec![a_ct, b_ct],
+    };
+
+    let err = runtime
+        .execute(&task)
+        .expect_err("Not is unary; two inputs must reject");
+    assert_eq!(
+        err,
+        EnclaveExecutionError::InputCountMismatch {
+            handle_key_count: 2,
+            ciphertext_count: 2,
+        }
     );
 }
 
