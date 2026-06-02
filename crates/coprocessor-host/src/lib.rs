@@ -134,11 +134,7 @@ pub struct CoprocessorHost {
     /// Set of dependencies currently reachable. The complement against
     /// [`DependencyName::all`] is the `Unavailable` list reported in readiness.
     available_dependencies: BTreeSet<DependencyName>,
-    /// Per-Handle-Key resolution intent registry. Populated by
-    /// [`Self::resolve_handle`] whenever a Handle Resolution Request lands on
-    /// a Pending Derived Handle; repeated requests collapse onto the same
-    /// intent so the future Resolution Scheduler sees one piece of work per
-    /// Handle.
+    /// Handle Resolution Request attachments grouped by Handle Key.
     resolution_intents: ResolutionIntents,
 }
 
@@ -254,20 +250,16 @@ impl CoprocessorHost {
     /// Internal Coordinator API: Resolve Handle Request.
     ///
     /// Returns the same [`HandleStateView`] projection as
-    /// [`Self::get_handle_state`] for already-known Canonical Handle Records,
-    /// and additionally attaches `request_id` to the resolution intent for
-    /// `handle_key` when the projected view is [`HandleStateView::Pending`].
-    /// `RequestId` identifies the request flow only; the Handle Graph lookup
-    /// key is `handle_key`, so repeated requests for the same Pending Derived
-    /// Handle collapse onto a single [`ResolutionIntent`] regardless of how
-    /// many distinct `RequestId`s have attached.
+    /// [`Self::get_handle_state`]. If `handle_key` currently projects to
+    /// [`HandleStateView::Pending`], the request is also attached to that
+    /// Handle's resolution intent. Repeated requests for the same Pending
+    /// Derived Handle share one [`ResolutionIntent`], with `RequestId` stored
+    /// as request-flow metadata rather than as the lookup key.
     ///
-    /// Ready, Failed, and Unknown projections do not register a resolution
-    /// intent: the first two already carry their stable current state, and an
-    /// unknown or tombstoned Handle Key has no record for the Resolution
-    /// Scheduler to attach to. Chain Event Ingestion remains the only source
-    /// of Handle Records, so this call cannot move Handle Graph state by
-    /// itself even when a new resolution intent is registered.
+    /// Ready, Failed, Unknown, and tombstoned Handle Keys do not register
+    /// intents. Chain Event Ingestion remains the only source of Handle
+    /// Records, so this call never creates placeholder records or moves Handle
+    /// Graph state.
     pub fn resolve_handle(
         &mut self,
         request_id: RequestId,
@@ -291,7 +283,7 @@ impl CoprocessorHost {
     /// intent. Repeated `RequestId`s for the same Handle Key do not inflate
     /// this count.
     pub fn pending_resolution_intent_count(&self) -> usize {
-        self.resolution_intents.intent_count()
+        self.resolution_intents.len()
     }
 
     fn project_handle_state(&self, handle_key: &HandleKey) -> HandleStateView {

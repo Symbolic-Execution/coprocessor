@@ -1,20 +1,9 @@
-//! Internal Coordinator API tests for Handle Resolution Request dedup.
+//! Internal Coordinator API tests for Handle Resolution Request deduplication.
 //!
 //! A Handle Resolution Request carries a `RequestId` that identifies the
-//! request flow only — it is never the Handle Graph lookup key. Multiple
-//! requests for the same Pending Derived Handle must collapse onto a single
-//! resolution intent, and requests against Ready, Failed, or Unknown Handle
-//! Keys must return the stable current state without registering one.
-//!
-//! The four acceptance criteria from issue #28:
-//! - Repeated resolve requests for the same known Pending Derived Handle share
-//!   one resolution intent.
-//! - Repeated resolve requests for Ready and Failed handles return the stable
-//!   current state.
-//! - RequestId is treated as request-flow identity and never as the Handle
-//!   lookup key.
-//! - Tests cover duplicate RequestIds, distinct RequestIds for the same Handle
-//!   Key, and distinct Handle Keys.
+//! request flow, not the Handle Graph lookup key. Requests for the same Pending
+//! Derived Handle share one intent; Ready, Failed, Unknown, and tombstoned
+//! Handle Keys do not register one.
 
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
@@ -41,13 +30,7 @@ fn duplicate_request_ids_for_same_pending_handle_share_one_intent() {
 
     assert_eq!(first, HandleStateView::Pending);
     assert_eq!(second, HandleStateView::Pending);
-    assert_eq!(
-        host.pending_resolution_intent(&pending),
-        Some(ResolutionIntent {
-            handle_key: pending,
-            attached_request_ids: vec![request_id],
-        }),
-    );
+    assert_resolution_intent(&host, pending, vec![request_id]);
     assert_eq!(host.pending_resolution_intent_count(), 1);
 }
 
@@ -67,11 +50,7 @@ fn distinct_request_ids_for_same_pending_handle_share_one_intent() {
         HandleStateView::Pending,
     );
 
-    let intent = host
-        .pending_resolution_intent(&pending)
-        .expect("Pending Derived Handle must carry a resolution intent");
-    assert_eq!(intent.handle_key, pending);
-    assert_eq!(intent.attached_request_ids, vec![request_a, request_b]);
+    assert_resolution_intent(&host, pending, vec![request_a, request_b]);
     assert_eq!(host.pending_resolution_intent_count(), 1);
 }
 
@@ -86,16 +65,8 @@ fn distinct_handle_keys_yield_distinct_intents() {
     host.resolve_handle(request_a, &pending_one);
     host.resolve_handle(request_b, &pending_two);
 
-    assert_eq!(
-        host.pending_resolution_intent(&pending_one)
-            .map(|i| i.attached_request_ids),
-        Some(vec![request_a]),
-    );
-    assert_eq!(
-        host.pending_resolution_intent(&pending_two)
-            .map(|i| i.attached_request_ids),
-        Some(vec![request_b]),
-    );
+    assert_resolution_intent(&host, pending_one, vec![request_a]);
+    assert_resolution_intent(&host, pending_two, vec![request_b]);
     assert_eq!(host.pending_resolution_intent_count(), 2);
 }
 
@@ -109,21 +80,9 @@ fn same_request_id_against_distinct_handles_treats_request_id_as_request_flow_on
     host.resolve_handle(shared, &pending_one);
     host.resolve_handle(shared, &pending_two);
 
-    // RequestId is request-flow identity, so the same RequestId may legitimately
-    // appear in different Handle Resolution Requests. The Handle Key is what
-    // identifies the resolution intent — both calls register intents against
-    // their own Handle Key, never against the shared RequestId.
     assert_eq!(host.pending_resolution_intent_count(), 2);
-    assert_eq!(
-        host.pending_resolution_intent(&pending_one)
-            .map(|i| i.attached_request_ids),
-        Some(vec![shared]),
-    );
-    assert_eq!(
-        host.pending_resolution_intent(&pending_two)
-            .map(|i| i.attached_request_ids),
-        Some(vec![shared]),
-    );
+    assert_resolution_intent(&host, pending_one, vec![shared]);
+    assert_resolution_intent(&host, pending_two, vec![shared]);
 }
 
 #[test]
@@ -227,6 +186,20 @@ fn resolve_handle_does_not_change_handle_graph_state_when_registering_intent() {
 }
 
 // ---------- helpers ----------
+
+fn assert_resolution_intent(
+    host: &CoprocessorHost,
+    handle_key: HandleKey,
+    request_ids: Vec<RequestId>,
+) {
+    assert_eq!(
+        host.pending_resolution_intent(&handle_key),
+        Some(ResolutionIntent {
+            handle_key,
+            attached_request_ids: request_ids,
+        }),
+    );
+}
 
 fn running_host() -> CoprocessorHost {
     let mut host = CoprocessorHost::new(HostConfig::for_local_development());
