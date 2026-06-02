@@ -20,18 +20,24 @@ use coprocessor_handle_graph_core::{
     HandleId, HandleKey, HandleRecord, HandleType, ImportedHandle, IngestionOutcome,
     MaterializationReceipt, OperationCode, SystemCiphertextV1,
 };
-use coprocessor_host::{CoprocessorHost, HandleStateFailureCategory, HandleStateView, HostConfig};
+use coprocessor_host::{
+    CoprocessorHost, HandleStateFailureCategory, HandleStateView, HostConfig, RequestId,
+};
 
 const DEFAULT_CHAIN: u64 = 1;
 const DEFAULT_CONTRACT_SEED: u8 = 7;
 const DEFAULT_DOMAIN: u8 = 9;
+const DEFAULT_REQUEST_SEED: u8 = 0xA1;
 
 #[test]
 fn resolve_handle_returns_unknown_for_unknown_handle_key() {
-    let host = running_host();
+    let mut host = running_host();
     let unknown = default_handle_key(99);
 
-    assert_eq!(host.resolve_handle(&unknown), HandleStateView::Unknown);
+    assert_eq!(
+        host.resolve_handle(default_request_id(), &unknown),
+        HandleStateView::Unknown,
+    );
 }
 
 #[test]
@@ -55,7 +61,7 @@ fn resolve_handle_returns_ready_with_ciphertext_and_receipt_for_imported_handle(
         ),
     );
 
-    assert_eq!(host.resolve_handle(&key), expected);
+    assert_eq!(host.resolve_handle(default_request_id(), &key), expected);
 }
 
 #[test]
@@ -74,7 +80,10 @@ fn resolve_handle_returns_pending_for_canonical_pending_derived_handle() {
         ),
     );
 
-    assert_eq!(host.resolve_handle(&derived), HandleStateView::Pending);
+    assert_eq!(
+        host.resolve_handle(default_request_id(), &derived),
+        HandleStateView::Pending,
+    );
 }
 
 #[test]
@@ -100,7 +109,7 @@ fn resolve_handle_returns_failed_with_lineage_violation_category_for_unknown_inp
     );
 
     assert_eq!(
-        host.resolve_handle(&derived),
+        host.resolve_handle(default_request_id(), &derived),
         HandleStateView::Failed {
             category: HandleStateFailureCategory::LineageViolation,
         },
@@ -124,7 +133,7 @@ fn resolve_handle_returns_failed_with_operation_violation_category_for_wrong_ari
     );
 
     assert_eq!(
-        host.resolve_handle(&derived),
+        host.resolve_handle(default_request_id(), &derived),
         HandleStateView::Failed {
             category: HandleStateFailureCategory::OperationViolation,
         },
@@ -138,7 +147,7 @@ fn resolve_handle_returns_unknown_for_tombstoned_source_handle() {
     let event_ref = default_event_ref(1, 1);
     seed_imported(&mut host, key, HandleType::Suint256, event_ref);
     assert!(matches!(
-        host.resolve_handle(&key),
+        host.resolve_handle(default_request_id(), &key),
         HandleStateView::Ready { .. }
     ));
 
@@ -147,7 +156,7 @@ fn resolve_handle_returns_unknown_for_tombstoned_source_handle() {
         .apply_orphan_discard(&[event_ref]);
 
     assert_eq!(
-        host.resolve_handle(&key),
+        host.resolve_handle(default_request_id(), &key),
         HandleStateView::Unknown,
         "tombstoned record must collapse to Unknown on the Resolve Handle Request path"
     );
@@ -155,11 +164,11 @@ fn resolve_handle_returns_unknown_for_tombstoned_source_handle() {
 
 #[test]
 fn resolve_handle_for_unknown_key_does_not_create_handle_record() {
-    let host = running_host();
+    let mut host = running_host();
     let unknown = default_handle_key(99);
 
-    let _ = host.resolve_handle(&unknown);
-    let _ = host.resolve_handle(&unknown);
+    let _ = host.resolve_handle(default_request_id(), &unknown);
+    let _ = host.resolve_handle(default_request_id(), &unknown);
 
     assert!(
         host.handle_graph_core()
@@ -208,8 +217,8 @@ fn resolve_handle_does_not_change_handle_graph_state_for_known_records() {
     let readiness_before = host.handle_graph_core().resolution_readiness();
 
     for key in &observed_keys {
-        let _ = host.resolve_handle(key);
-        let _ = host.resolve_handle(key);
+        let _ = host.resolve_handle(default_request_id(), key);
+        let _ = host.resolve_handle(default_request_id(), key);
     }
 
     let snapshot_after = handle_state_snapshot(&host, &observed_keys);
@@ -243,9 +252,10 @@ fn resolve_handle_matches_get_handle_state_across_known_and_unknown_keys() {
     let unknown = default_handle_key(99);
 
     for key in [&a, &b, &derived, &unknown] {
+        let projected = host.get_handle_state(key);
+        let resolved = host.resolve_handle(default_request_id(), key);
         assert_eq!(
-            host.resolve_handle(key),
-            host.get_handle_state(key),
+            resolved, projected,
             "Resolve must project the same Handle State view as GET for {key:?}"
         );
     }
@@ -350,6 +360,10 @@ fn handle_key(chain_id: u64, contract_seed: u8, handle_seed: u8) -> HandleKey {
 
 fn default_event_ref(block_number: u64, log_index: u32) -> ChainEventRef {
     chain_event_ref(DEFAULT_CHAIN, block_number, log_index)
+}
+
+fn default_request_id() -> RequestId {
+    RequestId([DEFAULT_REQUEST_SEED; 32])
 }
 
 fn chain_event_ref(chain_id: u64, block_number: u64, log_index: u32) -> ChainEventRef {

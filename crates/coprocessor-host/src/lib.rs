@@ -23,6 +23,11 @@ mod chain_ingestion;
 
 pub use chain_ingestion::{ChainEventSource, ChainView, ChainViewPoll, IngestionReport};
 
+mod resolution_intent;
+
+use resolution_intent::ResolutionIntents;
+pub use resolution_intent::{RequestId, ResolutionIntent};
+
 const ALL_DEPENDENCIES: [DependencyName; 3] = [
     DependencyName::SymVmEventSurface,
     DependencyName::Mpc,
@@ -129,6 +134,8 @@ pub struct CoprocessorHost {
     /// Set of dependencies currently reachable. The complement against
     /// [`DependencyName::all`] is the `Unavailable` list reported in readiness.
     available_dependencies: BTreeSet<DependencyName>,
+    /// Handle Resolution Request attachments grouped by Handle Key.
+    resolution_intents: ResolutionIntents,
 }
 
 impl CoprocessorHost {
@@ -145,6 +152,7 @@ impl CoprocessorHost {
             handle_graph_core: HandleGraphCore::new(),
             lifecycle: LifecycleState::NotStarted,
             available_dependencies: BTreeSet::new(),
+            resolution_intents: ResolutionIntents::default(),
         }
     }
 
@@ -239,17 +247,43 @@ impl CoprocessorHost {
         self.project_handle_state(handle_key)
     }
 
-    /// Internal Coordinator API: Resolve Handle Request, current-state slice.
+    /// Internal Coordinator API: Resolve Handle Request.
     ///
     /// Returns the same [`HandleStateView`] projection as
-    /// [`Self::get_handle_state`] for already-known Canonical Handle Records.
-    /// This slice intentionally performs no Resolution Scheduler work and
-    /// creates no Handle Records: Chain Event Ingestion is the only source of
-    /// Handle Records, so an unknown or tombstoned Handle Key returns
-    /// [`HandleStateView::Unknown`] without leaving any placeholder behind.
-    /// The call therefore cannot move Handle Graph state by itself.
-    pub fn resolve_handle(&self, handle_key: &HandleKey) -> HandleStateView {
-        self.project_handle_state(handle_key)
+    /// [`Self::get_handle_state`]. If `handle_key` currently projects to
+    /// [`HandleStateView::Pending`], the request is also attached to that
+    /// Handle's resolution intent. Repeated requests for the same Pending
+    /// Derived Handle share one [`ResolutionIntent`], with `RequestId` stored
+    /// as request-flow metadata rather than as the lookup key.
+    ///
+    /// Ready, Failed, Unknown, and tombstoned Handle Keys do not register
+    /// intents. Chain Event Ingestion remains the only source of Handle
+    /// Records, so this call never creates placeholder records or moves Handle
+    /// Graph state.
+    pub fn resolve_handle(
+        &mut self,
+        request_id: RequestId,
+        handle_key: &HandleKey,
+    ) -> HandleStateView {
+        let view = self.project_handle_state(handle_key);
+        if matches!(view, HandleStateView::Pending) {
+            self.resolution_intents.attach(*handle_key, request_id);
+        }
+        view
+    }
+
+    /// Snapshot of the resolution intent for `handle_key`, or `None` if no
+    /// Handle Resolution Request has attached to it. The returned
+    /// `attached_request_ids` list is sorted and deduplicated.
+    pub fn pending_resolution_intent(&self, handle_key: &HandleKey) -> Option<ResolutionIntent> {
+        self.resolution_intents.intent(handle_key)
+    }
+
+    /// Number of distinct Handle Keys that currently carry a resolution
+    /// intent. Repeated `RequestId`s for the same Handle Key do not inflate
+    /// this count.
+    pub fn pending_resolution_intent_count(&self) -> usize {
+        self.resolution_intents.len()
     }
 
     fn project_handle_state(&self, handle_key: &HandleKey) -> HandleStateView {
