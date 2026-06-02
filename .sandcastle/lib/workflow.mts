@@ -68,15 +68,11 @@ export async function planIssues(
   allOpenIssues: GithubIssue[],
   token: string,
   issueLabel: string,
-<<<<<<< HEAD
-): Promise<PlannedIssue[]> {
-=======
   codexHome: string,
-) {
+): Promise<PlannedIssue[]> {
   const externalOpenIssues = allOpenIssues.filter(
     (issue) => !issue.labels.includes(issueLabel),
   );
->>>>>>> 651a667 (Configure Sandcastle agent models and Codex review auth)
   const plan = await sandcastle.run({
     hooks,
     sandbox: sandcastleDocker(token, codexHome),
