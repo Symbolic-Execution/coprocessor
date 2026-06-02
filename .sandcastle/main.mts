@@ -24,7 +24,10 @@ try {
 
       await refreshDefaultBranch(config.github, defaultBranch);
 
-      const openIssues = await githubClient.listOpenIssues(ISSUE_LABEL);
+      const allOpenIssues = await githubClient.listOpenIssues();
+      const openIssues = allOpenIssues.filter((issue) =>
+        issue.labels.includes(ISSUE_LABEL),
+      );
       if (openIssues.length === 0) {
         console.log(`No open issues labeled "${ISSUE_LABEL}". Exiting.`);
         break;
@@ -32,8 +35,10 @@ try {
 
       const plannedIssues = await planIssues(
         openIssues,
+        allOpenIssues,
         config.token,
         ISSUE_LABEL,
+        config.codexHome,
       );
 
       if (plannedIssues.length === 0) {
@@ -55,6 +60,7 @@ try {
             github: config.github,
             githubClient,
             defaultBranch,
+            codexHome: config.codexHome,
           }),
         ),
       );

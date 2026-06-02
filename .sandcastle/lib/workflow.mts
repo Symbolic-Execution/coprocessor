@@ -1,9 +1,10 @@
 import * as sandcastle from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
-import { claudeAgent } from "./agents.mts";
+import { claudeAgent, codexAgent } from "./agents.mts";
 import {
   CommandError,
+  fetchRemoteBranch,
   formatError,
   git,
   pushBranch,
@@ -31,35 +32,61 @@ import {
 } from "./review-cache.mts";
 import { repairManagedWorktreeSubmodules } from "./worktree-repair.mts";
 
+const CODEX_AUTH_MOUNT = "/home/agent/.codex-host";
+const CODEX_SANDBOX_HOME = "/home/agent/.codex";
+
 const hooks = {
-  sandbox: { onSandboxReady: [{ command: "npm install" }] },
+  sandbox: {
+    onSandboxReady: [
+      { command: "npm install" },
+      {
+        command: [
+          `if [ ! -f ${CODEX_AUTH_MOUNT}/auth.json ]; then echo "Missing Codex subscription auth at ${CODEX_AUTH_MOUNT}/auth.json" >&2; exit 1; fi`,
+          `mkdir -p ${CODEX_SANDBOX_HOME}`,
+          `cp -f ${CODEX_AUTH_MOUNT}/auth.json ${CODEX_SANDBOX_HOME}/auth.json`,
+          `if [ -f ${CODEX_AUTH_MOUNT}/config.toml ]; then cp -f ${CODEX_AUTH_MOUNT}/config.toml ${CODEX_SANDBOX_HOME}/config.toml; fi`,
+          `chmod 600 ${CODEX_SANDBOX_HOME}/auth.json`,
+        ].join(" && "),
+      },
+    ],
+  },
 };
 
 const copyToWorktree = ["node_modules"];
+const MAX_SYNC_REVIEW_PASSES = 3;
+const RESOLVER_IDLE_TIMEOUT_SECONDS = 1800;
 const plannerAgent = claudeAgent("claude-opus-4-8");
 const implementerAgent = claudeAgent("claude-opus-4-7");
-const reviewerAgent = claudeAgent("claude-opus-4-8");
+const resolverAgent = claudeAgent("claude-opus-4-8");
+const reviewerAgent = codexAgent("gpt-5.5", { effort: "high" });
 
 const planSchema = z.object({
   issues: z.array(
     z.object({ id: z.string(), title: z.string(), branch: z.string() }),
   ),
 });
+type PlannedIssueOutput = z.infer<typeof planSchema>["issues"][number];
 
 export async function planIssues(
   openIssues: GithubIssue[],
+  allOpenIssues: GithubIssue[],
   token: string,
   issueLabel: string,
-) {
+  codexHome: string,
+): Promise<PlannedIssue[]> {
+  const externalOpenIssues = allOpenIssues.filter(
+    (issue) => !issue.labels.includes(issueLabel),
+  );
   const plan = await sandcastle.run({
     hooks,
-    sandbox: docker({ env: { GH_TOKEN: token } }),
+    sandbox: sandcastleDocker(token, codexHome),
     name: "planner",
     maxIterations: 1,
     agent: plannerAgent,
     promptFile: "./.sandcastle/plan-prompt.md",
     promptArgs: {
       ISSUES_JSON: JSON.stringify(openIssues, null, 2),
+      EXTERNAL_OPEN_ISSUES_JSON: JSON.stringify(externalOpenIssues, null, 2),
       ISSUE_LABEL: issueLabel,
     },
     output: sandcastle.Output.object({ tag: "plan", schema: planSchema }),
@@ -67,7 +94,7 @@ export async function planIssues(
 
   const issuesById = new Map(openIssues.map((issue) => [issue.id, issue]));
 
-  return plan.output.issues.map((planned) => {
+  return plan.output.issues.map((planned: PlannedIssueOutput) => {
     const issue = issuesById.get(planned.id);
     if (!issue) {
       throw new Error(`Planner returned unknown issue id: ${planned.id}`);
@@ -89,14 +116,15 @@ export async function runIssueWorkflow(options: {
   github: GithubConfig;
   githubClient: GithubClient;
   defaultBranch: string;
+  codexHome: string;
 }) {
-  const { issue, github, githubClient, defaultBranch } = options;
+  const { issue, github, githubClient, defaultBranch, codexHome } = options;
   await repairManagedWorktreeSubmodules(issue.branch);
 
   const sandbox = await sandcastle.createSandbox({
     branch: issue.branch,
     baseBranch: `origin/${defaultBranch}`,
-    sandbox: docker({ env: { GH_TOKEN: github.token } }),
+    sandbox: sandcastleDocker(github.token, codexHome),
     hooks,
     copyToWorktree,
   });
@@ -144,42 +172,110 @@ export async function runIssueWorkflow(options: {
       );
     }
 
-    const headShaBeforeReview = await branchHeadSha(issue.branch);
-    const cachedReview = await readCachedApprovedReview(
-      issue.branch,
-      headShaBeforeReview,
-    );
-
-    if (cachedReview) {
-      review = cachedReview;
-      console.log(
-        `#${issue.number}: using cached approved review for ${headShaBeforeReview.slice(0, 7)}.`,
-      );
-    } else {
-      const reviewResult = await sandbox.run({
-        name: "reviewer",
-        maxIterations: 1,
-        agent: reviewerAgent,
-        promptFile: "./.sandcastle/review-prompt.md",
-        promptArgs: {
-          BRANCH: issue.branch,
-        },
+    for (let syncPass = 1; syncPass <= MAX_SYNC_REVIEW_PASSES; syncPass++) {
+      const preReviewSync = await syncIssueBranchWithDefault({
+        sandbox,
+        issue,
+        github,
+        defaultBranch,
       });
+      if (preReviewSync.changed) {
+        console.log(
+          `#${issue.number}: synced ${issue.branch} with origin/${defaultBranch} before review.`,
+        );
+      }
 
-      review = parseReview(reviewResult.stdout);
-    }
-    branchCommits = await listBranchCommitsSince(
-      `origin/${defaultBranch}`,
-      issue.branch,
-    );
-    await writeCachedReview(
-      issue.branch,
-      await branchHeadSha(issue.branch),
-      review,
-    );
+      branchCommits = await listBranchCommitsSince(
+        `origin/${defaultBranch}`,
+        issue.branch,
+      );
+      if (branchCommits.length === 0) {
+        console.log(`#${issue.number}: no commits produced; no PR created.`);
+        return;
+      }
 
-    if (review.approved) {
-      gate = await runQualityGates(sandbox.worktreePath);
+      const headShaBeforeReview = await branchHeadSha(issue.branch);
+      const cachedReview = await readCachedApprovedReview(
+        issue.branch,
+        headShaBeforeReview,
+      );
+
+      if (cachedReview) {
+        review = cachedReview;
+        console.log(
+          `#${issue.number}: using cached approved review for ${headShaBeforeReview.slice(0, 7)}.`,
+        );
+      } else {
+        const reviewResult = await sandbox.run({
+          name: "reviewer",
+          maxIterations: 1,
+          agent: reviewerAgent,
+          promptFile: "./.sandcastle/review-prompt.md",
+          promptArgs: {
+            BRANCH: issue.branch,
+          },
+        });
+
+        review = parseReview(reviewResult.stdout);
+      }
+      branchCommits = await listBranchCommitsSince(
+        `origin/${defaultBranch}`,
+        issue.branch,
+      );
+      await writeCachedReview(
+        issue.branch,
+        await branchHeadSha(issue.branch),
+        review,
+      );
+
+      if (review.approved) {
+        gate = await runQualityGates(sandbox.worktreePath);
+      }
+
+      if (!review.approved || !gate.passed) {
+        break;
+      }
+
+      const preMergeSync = await syncIssueBranchWithDefault({
+        sandbox,
+        issue,
+        github,
+        defaultBranch,
+      });
+      if (!preMergeSync.changed) {
+        break;
+      }
+
+      branchCommits = await listBranchCommitsSince(
+        `origin/${defaultBranch}`,
+        issue.branch,
+      );
+      review = {
+        approved: false,
+        summary: "Reviewer did not run after the latest main sync.",
+        blockers: ["Reviewer did not run after the latest main sync."],
+        testNotes: "",
+      };
+      gate = {
+        passed: false,
+        summary: "Quality gates were not run after the latest main sync.",
+        details:
+          "A merge from the default branch changed this branch after review.",
+      };
+
+      if (syncPass === MAX_SYNC_REVIEW_PASSES) {
+        gate = {
+          passed: false,
+          summary: `Could not stabilize ${issue.branch} against origin/${defaultBranch}.`,
+          details:
+            "The default branch changed after review too many times. Re-run Sandcastle to review the latest sync.",
+        };
+        break;
+      }
+
+      console.log(
+        `#${issue.number}: origin/${defaultBranch} changed after review; re-running review and gates.`,
+      );
     }
   } finally {
     const closeResult = await sandbox.close();
@@ -252,6 +348,122 @@ export async function runIssueWorkflow(options: {
       `#${issue.number}: PR left open because merge failed: ${pr.html_url}`,
     );
   }
+}
+
+function sandcastleDocker(token: string, codexHome: string) {
+  return docker({
+    env: { GH_TOKEN: token },
+    mounts: [
+      {
+        hostPath: codexHome,
+        sandboxPath: CODEX_AUTH_MOUNT,
+        readonly: true,
+      },
+    ],
+  });
+}
+
+async function syncIssueBranchWithDefault(options: {
+  sandbox: Awaited<ReturnType<typeof sandcastle.createSandbox>>;
+  issue: PlannedIssue;
+  github: GithubConfig;
+  defaultBranch: string;
+}) {
+  const { sandbox, issue, github, defaultBranch } = options;
+  const targetRef = `origin/${defaultBranch}`;
+  await fetchRemoteBranch(github, defaultBranch);
+
+  const before = await worktreeHeadSha(sandbox.worktreePath);
+  try {
+    await git(["merge", "--no-edit", targetRef], {
+      cwd: sandbox.worktreePath,
+    });
+  } catch (error) {
+    if (
+      !(error instanceof CommandError) ||
+      !(await hasMergeInProgress(sandbox.worktreePath))
+    ) {
+      throw error;
+    }
+
+    const conflicts = await conflictedFiles(sandbox.worktreePath);
+    console.log(
+      `#${issue.number}: resolving conflicts with ${targetRef}: ${conflicts.join(", ")}`,
+    );
+
+    await sandbox.run({
+      name: "resolver",
+      maxIterations: 20,
+      idleTimeoutSeconds: RESOLVER_IDLE_TIMEOUT_SECONDS,
+      agent: resolverAgent,
+      promptFile: "./.sandcastle/resolve-conflicts-prompt.md",
+      promptArgs: {
+        TASK_ID: issue.id,
+        ISSUE_TITLE: issue.title,
+        BRANCH: issue.branch,
+        DEFAULT_BRANCH: defaultBranch,
+        CONFLICTED_FILES: conflicts.join("\n"),
+      },
+    });
+
+    await finishMergeResolution(sandbox.worktreePath);
+  }
+
+  const after = await worktreeHeadSha(sandbox.worktreePath);
+  return { changed: before !== after };
+}
+
+async function finishMergeResolution(worktreePath: string) {
+  const conflicts = await conflictedFiles(worktreePath);
+  if (conflicts.length > 0) {
+    throw new Error(
+      `Resolver left merge conflicts unresolved: ${conflicts.join(", ")}`,
+    );
+  }
+
+  if (await hasMergeInProgress(worktreePath)) {
+    await git(["commit", "--no-edit"], { cwd: worktreePath });
+  }
+
+  const status = (
+    await git(["status", "--porcelain", "--ignore-submodules=all"], {
+      cwd: worktreePath,
+    })
+  ).stdout.trim();
+  if (status) {
+    throw new Error(
+      `Resolver left uncommitted changes after merge resolution:\n${status}`,
+    );
+  }
+}
+
+async function conflictedFiles(worktreePath: string) {
+  return (
+    await git(["diff", "--name-only", "--diff-filter=U"], {
+      cwd: worktreePath,
+    })
+  ).stdout
+    .trim()
+    .split("\n")
+    .filter((file) => file.length > 0);
+}
+
+async function hasMergeInProgress(worktreePath: string) {
+  try {
+    await git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], {
+      cwd: worktreePath,
+    });
+    return true;
+  } catch (error) {
+    if (error instanceof CommandError) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function worktreeHeadSha(worktreePath: string) {
+  return (await git(["rev-parse", "HEAD"], { cwd: worktreePath })).stdout.trim();
 }
 
 async function runQualityGates(

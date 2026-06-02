@@ -245,7 +245,10 @@ fn restored_core_serves_canonical_records_for_pending_ready_and_failed_states() 
     let restored = HandleGraphCore::restore_from_persistence(&store);
 
     assert!(matches!(
-        restored.canonical_handle(&imported).expect("imported").state,
+        restored
+            .canonical_handle(&imported)
+            .expect("imported")
+            .state,
         HandleState::Ready { .. }
     ));
     assert_eq!(

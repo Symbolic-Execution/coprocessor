@@ -4,6 +4,13 @@ pub mod persistence;
 
 pub use persistence::{HandlePersistence, InMemoryHandlePersistence};
 
+mod chain_log_decoder;
+
+pub use chain_log_decoder::{
+    decode_chain_log, ChainLog, ChainLogDecodeError, HANDLE_FROM_PLAINTEXT_V1_SIGNATURE,
+    HANDLE_IMPORTED_V1_SIGNATURE, OPERATION_REQUESTED_V1_SIGNATURE,
+};
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ChainId(pub u64);
 
@@ -32,8 +39,14 @@ pub enum HandleType {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OperationCode {
     Add,
+    Sub,
     Eq,
+    Lt,
+    Lte,
+    Gt,
+    Gte,
     And,
+    Or,
     Not,
     Select,
 }
@@ -611,7 +624,15 @@ fn placeholder_plaintext_receipt(plaintext: &PlaintextHandle) -> Materialization
 
 fn expected_arity(op: OperationCode) -> usize {
     match op {
-        OperationCode::Add | OperationCode::Eq | OperationCode::And => 2,
+        OperationCode::Add
+        | OperationCode::Sub
+        | OperationCode::Eq
+        | OperationCode::Lt
+        | OperationCode::Lte
+        | OperationCode::Gt
+        | OperationCode::Gte
+        | OperationCode::And
+        | OperationCode::Or => 2,
         OperationCode::Not => 1,
         OperationCode::Select => 3,
     }
@@ -638,15 +659,19 @@ fn validate_operation_types(
     output_type: HandleType,
 ) -> Result<(), OperationViolation> {
     match op {
-        OperationCode::Add => {
+        OperationCode::Add | OperationCode::Sub => {
             require_each_input(inputs, HandleType::Suint256)?;
             require_output(output_type, HandleType::Suint256)
         }
-        OperationCode::Eq => {
+        OperationCode::Eq
+        | OperationCode::Lt
+        | OperationCode::Lte
+        | OperationCode::Gt
+        | OperationCode::Gte => {
             require_each_input(inputs, HandleType::Suint256)?;
             require_output(output_type, HandleType::Sbool)
         }
-        OperationCode::And => {
+        OperationCode::And | OperationCode::Or => {
             require_each_input(inputs, HandleType::Sbool)?;
             require_output(output_type, HandleType::Sbool)
         }
