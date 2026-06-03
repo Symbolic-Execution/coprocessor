@@ -6,6 +6,15 @@ Resolve merge conflicts on branch `{{BRANCH}}` for issue {{TASK_ID}}:
 The branch is currently in the middle of merging `origin/{{DEFAULT_BRANCH}}`.
 Your job is only to finish that merge safely.
 
+# IMPLEMENTATION BRIEF
+
+Use this brief to preserve the issue branch's intended behavior while resolving
+conflicts. Do not use it as permission to add new feature work during the merge.
+
+<implementation-brief>
+{{IMPLEMENTATION_BRIEF}}
+</implementation-brief>
+
 # CONFLICTED FILES
 
 ```text

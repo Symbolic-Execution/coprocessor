@@ -57,8 +57,19 @@ export type GithubIssue = {
   comments: string[];
 };
 
+export type ImplementationBrief = {
+  intent: string;
+  nonGoals: string[];
+  designDecisions: string[];
+  filesLikelyTouched: string[];
+  testsRequired: string[];
+  securityPrivacyChecks: string[];
+  escalationTriggers: string[];
+};
+
 export type PlannedIssue = GithubIssue & {
   branch: string;
+  implementationBrief: ImplementationBrief;
 };
 
 export type PullRequest = {
