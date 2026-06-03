@@ -28,8 +28,7 @@ use coprocessor_mpc_client::{
 };
 use coprocessor_nitro_enclave::{
     AttestationDigest as NitroAttestationDigest, LocalEnclaveAttestationConfig,
-    LocalEnclaveAttestationSource, NitroAdapterConfig, NitroAttestationDoc,
-    NitroAttestationDocSource, NitroSourceError,
+    NitroAdapterConfig, NitroAttestationDoc, NitroAttestationDocSource, NitroSourceError,
 };
 
 // Shared measurement value used by both Local and Nitro paths in parity tests.
@@ -127,18 +126,7 @@ fn nitro_factory_wires_adapter_measurement_to_mpc_request() {
     let mut host = CoprocessorHost::new(config);
     host.start().expect("valid Nitro config must start");
 
-    let a = handle_key(0x01);
-    let b = handle_key(0x02);
-    let derived = handle_key(0x10);
-
-    ingest_events(
-        &mut host,
-        vec![
-            imported_event(a, HandleType::Suint256, well_formed_system_ciphertext(a, "suint256"), 1, 1),
-            imported_event(b, HandleType::Suint256, well_formed_system_ciphertext(b, "suint256"), 1, 2),
-            derived_event(derived, OperationCode::Add, HandleType::Suint256, vec![a, b], 2, 1),
-        ],
-    );
+    let (a, b, _) = setup_add_scenario(&mut host);
 
     let tasks = host.claim_resolution_tasks();
     assert_eq!(tasks.len(), 1);
@@ -150,7 +138,12 @@ fn nitro_factory_wires_adapter_measurement_to_mpc_request() {
     ]);
     let enclave = FakeEnclaveRuntime::deterministic();
 
-    let view = host.resolve_claimed_task(task, &recording_mpc, attestation_source.as_ref(), &enclave);
+    let view = host.resolve_claimed_task(
+        task,
+        &recording_mpc,
+        attestation_source.as_ref(),
+        &enclave,
+    );
 
     assert!(
         matches!(view, HandleStateView::Ready { .. }),
@@ -169,6 +162,11 @@ fn nitro_factory_wires_adapter_measurement_to_mpc_request() {
             request.enclave_public_key,
             SHARED_PUBLIC_KEY,
             "every MPC request must carry the Nitro adapter's public key"
+        );
+        assert_eq!(
+            request.attestation,
+            SHARED_ATTESTATION,
+            "every MPC request must carry the Nitro adapter's attestation evidence"
         );
     }
 }
@@ -477,60 +475,40 @@ struct ResolutionResult {
 }
 
 fn run_add_resolution_with_local_source() -> ResolutionResult {
-    let mut host = running_host_local();
-    let a = handle_key(0x01);
-    let b = handle_key(0x02);
-    let derived = handle_key(0x10);
-    ingest_events(
-        &mut host,
-        vec![
-            imported_event(a, HandleType::Suint256, well_formed_system_ciphertext(a, "suint256"), 1, 1),
-            imported_event(b, HandleType::Suint256, well_formed_system_ciphertext(b, "suint256"), 1, 2),
-            derived_event(derived, OperationCode::Add, HandleType::Suint256, vec![a, b], 2, 1),
-        ],
-    );
+    let config = host_config_with_shared_local_attestation();
+    let mut host = running_host_from_config(config.clone());
+    let (a, b, _) = setup_add_scenario(&mut host);
 
     let tasks = host.claim_resolution_tasks();
     assert_eq!(tasks.len(), 1, "must claim exactly one task");
     let task = &tasks[0];
 
-    let attestation_source = local_attestation_source();
+    let attestation_source = config
+        .build_local_attestation_source()
+        .expect("shared Local config must build attestation source");
     let mpc_server = ProgrammableMpcServer::new(vec![
         fake_enclave_ciphertext(a, 0xC0),
         fake_enclave_ciphertext(b, 0xC1),
     ]);
     let enclave = FakeEnclaveRuntime::deterministic();
 
-    let view = host.resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
+    let view = host.resolve_claimed_task(task, &mpc_server, attestation_source.as_ref(), &enclave);
     ResolutionResult { view }
 }
 
 fn run_add_resolution_with_nitro_source() -> ResolutionResult {
-    let mut host = running_host_with_nitro(SHARED_MEASUREMENT, SHARED_PUBLIC_KEY.len());
-    let a = handle_key(0x01);
-    let b = handle_key(0x02);
-    let derived = handle_key(0x10);
-    ingest_events(
-        &mut host,
-        vec![
-            imported_event(a, HandleType::Suint256, well_formed_system_ciphertext(a, "suint256"), 1, 1),
-            imported_event(b, HandleType::Suint256, well_formed_system_ciphertext(b, "suint256"), 1, 2),
-            derived_event(derived, OperationCode::Add, HandleType::Suint256, vec![a, b], 2, 1),
-        ],
-    );
+    let config =
+        HostConfig::for_production_nitro(SHARED_MEASUREMENT, SHARED_PUBLIC_KEY.len());
+    let mut host = running_host_from_config(config.clone());
+    let (a, b, _) = setup_add_scenario(&mut host);
 
     let tasks = host.claim_resolution_tasks();
     assert_eq!(tasks.len(), 1, "must claim exactly one task");
     let task = &tasks[0];
 
-    let nitro_source = NitroEnclaveAdapter::new(
-        NitroAdapterConfig {
-            approved_enclave_measurement: SHARED_MEASUREMENT,
-            expected_public_key_len: SHARED_PUBLIC_KEY.len(),
-        },
-        FakeNitroDocSource::matching(),
-    )
-    .expect("valid config");
+    let nitro_source = config
+        .build_nitro_attestation_source(FakeNitroDocSource::matching())
+        .expect("shared Nitro config must build attestation source");
 
     let mpc_server = ProgrammableMpcServer::new(vec![
         fake_enclave_ciphertext(a, 0xC0),
@@ -538,12 +516,12 @@ fn run_add_resolution_with_nitro_source() -> ResolutionResult {
     ]);
     let enclave = FakeEnclaveRuntime::deterministic();
 
-    let view = host.resolve_claimed_task(task, &mpc_server, &nitro_source, &enclave);
+    let view = host.resolve_claimed_task(task, &mpc_server, nitro_source.as_ref(), &enclave);
     ResolutionResult { view }
 }
 
-fn running_host_local() -> CoprocessorHost {
-    let mut host = CoprocessorHost::new(HostConfig::for_local_development());
+fn running_host_from_config(config: HostConfig) -> CoprocessorHost {
+    let mut host = CoprocessorHost::new(config);
     host.start().unwrap();
     host
 }
@@ -553,9 +531,7 @@ fn running_host_with_nitro(
     expected_public_key_len: usize,
 ) -> CoprocessorHost {
     let config = HostConfig::for_production_nitro(measurement, expected_public_key_len);
-    let mut host = CoprocessorHost::new(config);
-    host.start().unwrap();
-    host
+    running_host_from_config(config)
 }
 
 fn setup_add_scenario(host: &mut CoprocessorHost) -> (HandleKey, HandleKey, HandleKey) {
@@ -565,20 +541,42 @@ fn setup_add_scenario(host: &mut CoprocessorHost) -> (HandleKey, HandleKey, Hand
     ingest_events(
         host,
         vec![
-            imported_event(a, HandleType::Suint256, well_formed_system_ciphertext(a, "suint256"), 1, 1),
-            imported_event(b, HandleType::Suint256, well_formed_system_ciphertext(b, "suint256"), 1, 2),
-            derived_event(derived, OperationCode::Add, HandleType::Suint256, vec![a, b], 2, 1),
+            imported_event(
+                a,
+                HandleType::Suint256,
+                well_formed_system_ciphertext(a, "suint256"),
+                1,
+                1,
+            ),
+            imported_event(
+                b,
+                HandleType::Suint256,
+                well_formed_system_ciphertext(b, "suint256"),
+                1,
+                2,
+            ),
+            derived_event(
+                derived,
+                OperationCode::Add,
+                HandleType::Suint256,
+                vec![a, b],
+                2,
+                1,
+            ),
         ],
     );
     (a, b, derived)
 }
 
-fn local_attestation_source() -> LocalEnclaveAttestationSource {
-    LocalEnclaveAttestationSource::new(LocalEnclaveAttestationConfig {
-        enclave_public_key: SHARED_PUBLIC_KEY.to_vec(),
-        enclave_measurement: SHARED_MEASUREMENT,
-        attestation: SHARED_ATTESTATION.to_vec(),
-    })
+fn host_config_with_shared_local_attestation() -> HostConfig {
+    HostConfig {
+        enclave_attestation: EnclaveAttestationConfig::Local(LocalEnclaveAttestationConfig {
+            enclave_public_key: SHARED_PUBLIC_KEY.to_vec(),
+            enclave_measurement: SHARED_MEASUREMENT,
+            attestation: SHARED_ATTESTATION.to_vec(),
+        }),
+        ..HostConfig::for_local_development()
+    }
 }
 
 fn extract_derived_receipt(view: &HandleStateView) -> coprocessor_host::DerivedHandleReceiptView {
