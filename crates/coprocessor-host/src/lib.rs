@@ -22,7 +22,7 @@ use coprocessor_nitro_enclave::EnclaveAttestationSource;
 
 mod internal_api;
 
-pub use internal_api::{HandleStateFailureCategory, HandleStateView};
+pub use internal_api::{DerivedHandleReceiptView, HandleStateFailureCategory, HandleStateView};
 
 mod chain_ingestion;
 

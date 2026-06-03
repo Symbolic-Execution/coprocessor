@@ -55,9 +55,12 @@ fn get_handle_state_returns_ready_with_ciphertext_and_receipt_for_imported_handl
         HandleStateView::Ready {
             system_ciphertext,
             materialization_receipt,
+            derived_receipt,
         } => {
             assert_eq!(system_ciphertext, ciphertext);
             assert_eq!(materialization_receipt, receipt);
+            // Source (Imported) handle: no structured derived receipt
+            assert_eq!(derived_receipt, None);
         }
         other => panic!("expected Ready view, got {other:?}"),
     }

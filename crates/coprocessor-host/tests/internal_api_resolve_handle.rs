@@ -49,6 +49,7 @@ fn resolve_handle_returns_ready_with_ciphertext_and_receipt_for_imported_handle(
     let expected = HandleStateView::Ready {
         system_ciphertext: ciphertext.clone(),
         materialization_receipt: receipt.clone(),
+        derived_receipt: None,
     };
     ingest(
         &mut host,
