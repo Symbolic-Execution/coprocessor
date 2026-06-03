@@ -236,6 +236,12 @@ impl HostConfig {
     }
 }
 
+impl Default for HostConfig {
+    fn default() -> Self {
+        Self::for_local_development()
+    }
+}
+
 /// Reasons configuration validation can fail before the host starts. Failure
 /// keeps the host in [`LifecycleState::NotStarted`].
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -244,7 +250,9 @@ pub enum HostConfigError {
     RetryPolicyRequiresAttempt,
     /// Nitro adapter configuration failed its own validation rules.
     /// `detail` is the non-secret description of the failing rule.
-    InvalidEnclaveAttestationConfig { detail: String },
+    InvalidEnclaveAttestationConfig {
+        detail: String,
+    },
 }
 
 /// Lifecycle phase of the Coprocessor Host. Transitions are linear:

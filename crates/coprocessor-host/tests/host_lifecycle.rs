@@ -37,6 +37,11 @@ fn host_starts_with_local_development_config_and_loads_handle_graph_core() {
 }
 
 #[test]
+fn host_config_default_is_local_development_config() {
+    assert_eq!(HostConfig::default(), HostConfig::for_local_development());
+}
+
+#[test]
 fn host_readiness_distinguishes_configuration_loaded_from_all_dependencies_ready() {
     let mut host = CoprocessorHost::new(HostConfig::for_local_development());
     host.start().unwrap();

@@ -27,8 +27,8 @@ use coprocessor_mpc_client::{
     MpcSourceError, MpcToEnclaveResponse, MpcToEnclaveSource, ToEnclaveTransformationRequest,
 };
 use coprocessor_nitro_enclave::{
-    AttestationDigest as NitroAttestationDigest, LocalEnclaveAttestationConfig,
-    NitroAdapterConfig, NitroAttestationDoc, NitroAttestationDocSource, NitroSourceError,
+    AttestationDigest as NitroAttestationDigest, LocalEnclaveAttestationConfig, NitroAdapterConfig,
+    NitroAttestationDoc, NitroAttestationDocSource, NitroSourceError,
 };
 
 // Shared measurement value used by both Local and Nitro paths in parity tests.
@@ -115,8 +115,7 @@ fn nitro_receipt_attestation_digest_equals_approved_measurement() {
 /// Nitro adapter's measurement.
 #[test]
 fn nitro_factory_wires_adapter_measurement_to_mpc_request() {
-    let config =
-        HostConfig::for_production_nitro(SHARED_MEASUREMENT, SHARED_PUBLIC_KEY.len());
+    let config = HostConfig::for_production_nitro(SHARED_MEASUREMENT, SHARED_PUBLIC_KEY.len());
 
     let fake_doc = FakeNitroDocSource::matching();
     let attestation_source = config
@@ -138,12 +137,8 @@ fn nitro_factory_wires_adapter_measurement_to_mpc_request() {
     ]);
     let enclave = FakeEnclaveRuntime::deterministic();
 
-    let view = host.resolve_claimed_task(
-        task,
-        &recording_mpc,
-        attestation_source.as_ref(),
-        &enclave,
-    );
+    let view =
+        host.resolve_claimed_task(task, &recording_mpc, attestation_source.as_ref(), &enclave);
 
     assert!(
         matches!(view, HandleStateView::Ready { .. }),
@@ -159,13 +154,11 @@ fn nitro_factory_wires_adapter_measurement_to_mpc_request() {
             "every MPC request must carry the Nitro adapter's measurement"
         );
         assert_eq!(
-            request.enclave_public_key,
-            SHARED_PUBLIC_KEY,
+            request.enclave_public_key, SHARED_PUBLIC_KEY,
             "every MPC request must carry the Nitro adapter's public key"
         );
         assert_eq!(
-            request.attestation,
-            SHARED_ATTESTATION,
+            request.attestation, SHARED_ATTESTATION,
             "every MPC request must carry the Nitro adapter's attestation evidence"
         );
     }
@@ -218,7 +211,9 @@ fn all_zero_approved_measurement_fails_host_start() {
     };
 
     let mut host = CoprocessorHost::new(config.clone());
-    let err = host.start().expect_err("all-zero measurement must fail host start");
+    let err = host
+        .start()
+        .expect_err("all-zero measurement must fail host start");
 
     assert!(
         matches!(
@@ -497,8 +492,7 @@ fn run_add_resolution_with_local_source() -> ResolutionResult {
 }
 
 fn run_add_resolution_with_nitro_source() -> ResolutionResult {
-    let config =
-        HostConfig::for_production_nitro(SHARED_MEASUREMENT, SHARED_PUBLIC_KEY.len());
+    let config = HostConfig::for_production_nitro(SHARED_MEASUREMENT, SHARED_PUBLIC_KEY.len());
     let mut host = running_host_from_config(config.clone());
     let (a, b, _) = setup_add_scenario(&mut host);
 
@@ -581,7 +575,9 @@ fn host_config_with_shared_local_attestation() -> HostConfig {
 
 fn extract_derived_receipt(view: &HandleStateView) -> coprocessor_host::DerivedHandleReceiptView {
     match view {
-        HandleStateView::Ready { derived_receipt, .. } => derived_receipt
+        HandleStateView::Ready {
+            derived_receipt, ..
+        } => derived_receipt
             .clone()
             .expect("Derived Handle must have a DerivedHandleReceiptView"),
         other => panic!("expected Ready, got {:?}", other),
