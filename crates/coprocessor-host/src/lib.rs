@@ -18,7 +18,10 @@ use coprocessor_handle_graph_core::{
     HandleGraphCore, HandleKey, HandlePersistence, PlaintextMaterializer,
 };
 use coprocessor_mpc_client::{EnclaveCiphertextV1, MpcToEnclaveSource};
-use coprocessor_nitro_enclave::EnclaveAttestationSource;
+use coprocessor_nitro_enclave::{
+    EnclaveAttestationSource, LocalEnclaveAttestationConfig, LocalEnclaveAttestationSource,
+    NitroAdapterConfig, NitroAttestationDocSource, NitroEnclaveAdapter,
+};
 
 mod derived_receipt;
 mod internal_api;
@@ -93,6 +96,20 @@ impl Default for RetryPolicy {
     }
 }
 
+/// Config-driven selection of the Enclave attestation source. Local mode serves
+/// pre-baked material for tests and local development; Nitro mode wires the
+/// AWS Nitro Enclave adapter backed by an injectable [`NitroAttestationDocSource`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EnclaveAttestationConfig {
+    /// Pre-baked, deterministic attestation material. Delegates to
+    /// [`LocalEnclaveAttestationSource`]. Use for local development and
+    /// in-process tests; never use in production.
+    Local(LocalEnclaveAttestationConfig),
+    /// AWS Nitro Enclave production adapter. Delegates to
+    /// [`NitroEnclaveAdapter`] backed by an injectable [`NitroAttestationDocSource`].
+    Nitro(NitroAdapterConfig),
+}
+
 /// Configuration loaded by the Coprocessor Host before startup. The shape is
 /// deliberately minimal in this scaffold: the runtime/stack decision (issue
 /// #18) will extend this with endpoints, persistence, and credentials.
@@ -108,6 +125,12 @@ pub struct HostConfig {
     /// failure. The handle stays Pending while attempts remain; on budget
     /// exhaustion the handle transitions to Failed.
     pub retry_policy: RetryPolicy,
+    /// Enclave attestation source selection. Defaults to `Local` in
+    /// [`Self::for_local_development`]; production deployments use
+    /// [`EnclaveAttestationConfig::Nitro`] and wire a real
+    /// [`NitroAttestationDocSource`] at startup via
+    /// [`Self::build_nitro_attestation_source`].
+    pub enclave_attestation: EnclaveAttestationConfig,
 }
 
 impl HostConfig {
@@ -119,6 +142,75 @@ impl HostConfig {
             deployment_label: "local-development".to_string(),
             chain_view: ChainView::default(),
             retry_policy: RetryPolicy::default(),
+            enclave_attestation: EnclaveAttestationConfig::Local(LocalEnclaveAttestationConfig {
+                enclave_public_key: vec![0x44; 48],
+                enclave_measurement: coprocessor_nitro_enclave::AttestationDigest([0x42; 32]),
+                attestation: vec![0x55; 96],
+            }),
+        }
+    }
+
+    /// Configuration for production AWS Nitro Enclave mode.
+    ///
+    /// `enclave_measurement` is the approved PCR0 MPC checks attestations
+    /// against. `expected_public_key_len` is the byte-count expectation driven
+    /// by the chosen MPC suite (e.g. 48 for `bls12-381-g1`).
+    ///
+    /// Wire the `NitroAttestationDocSource` at startup via
+    /// [`Self::build_nitro_attestation_source`].
+    pub fn for_production_nitro(
+        enclave_measurement: coprocessor_nitro_enclave::AttestationDigest,
+        expected_public_key_len: usize,
+    ) -> Self {
+        Self {
+            deployment_label: "production-nitro".to_string(),
+            chain_view: ChainView::default(),
+            retry_policy: RetryPolicy::default(),
+            enclave_attestation: EnclaveAttestationConfig::Nitro(NitroAdapterConfig {
+                approved_enclave_measurement: enclave_measurement,
+                expected_public_key_len,
+            }),
+        }
+    }
+
+    /// Build a [`LocalEnclaveAttestationSource`] from the config's local
+    /// attestation material. Returns
+    /// [`HostStartError::EnclaveAttestationModeMismatch`] if the config uses
+    /// Nitro mode.
+    pub fn build_local_attestation_source(
+        &self,
+    ) -> Result<Box<dyn EnclaveAttestationSource>, HostStartError> {
+        match &self.enclave_attestation {
+            EnclaveAttestationConfig::Local(cfg) => {
+                Ok(Box::new(LocalEnclaveAttestationSource::new(cfg.clone())))
+            }
+            EnclaveAttestationConfig::Nitro(_) => {
+                Err(HostStartError::EnclaveAttestationModeMismatch)
+            }
+        }
+    }
+
+    /// Build a [`NitroEnclaveAdapter`] backed by `doc_source`. The
+    /// `doc_source` is the injectable [`NitroAttestationDocSource`]: use a
+    /// fake in tests and a real NSM transport in production.
+    ///
+    /// Returns [`HostStartError::EnclaveAttestationModeMismatch`] if the
+    /// config uses Local mode. Returns
+    /// [`HostStartError::InvalidEnclaveAttestationConfig`] if the Nitro
+    /// config fails [`NitroAdapterConfig::validate`].
+    pub fn build_nitro_attestation_source<S: NitroAttestationDocSource + 'static>(
+        &self,
+        doc_source: S,
+    ) -> Result<Box<dyn EnclaveAttestationSource>, HostStartError> {
+        match &self.enclave_attestation {
+            EnclaveAttestationConfig::Nitro(cfg) => {
+                NitroEnclaveAdapter::new(cfg.clone(), doc_source)
+                    .map(|adapter| Box::new(adapter) as Box<dyn EnclaveAttestationSource>)
+                    .map_err(HostStartError::InvalidEnclaveAttestationConfig)
+            }
+            EnclaveAttestationConfig::Local(_) => {
+                Err(HostStartError::EnclaveAttestationModeMismatch)
+            }
         }
     }
 
@@ -129,7 +221,24 @@ impl HostConfig {
         if self.retry_policy.max_attempts == 0 {
             return Err(HostConfigError::RetryPolicyRequiresAttempt);
         }
+        if let EnclaveAttestationConfig::Nitro(cfg) = &self.enclave_attestation {
+            cfg.validate().map_err(|e| {
+                let detail = match e {
+                    coprocessor_nitro_enclave::EnclaveAttestationError::InvalidConfiguration {
+                        detail,
+                    } => detail,
+                    other => format!("unexpected validation error: {other:?}"),
+                };
+                HostConfigError::InvalidEnclaveAttestationConfig { detail }
+            })?;
+        }
         Ok(())
+    }
+}
+
+impl Default for HostConfig {
+    fn default() -> Self {
+        Self::for_local_development()
     }
 }
 
@@ -139,6 +248,11 @@ impl HostConfig {
 pub enum HostConfigError {
     EmptyDeploymentLabel,
     RetryPolicyRequiresAttempt,
+    /// Nitro adapter configuration failed its own validation rules.
+    /// `detail` is the non-secret description of the failing rule.
+    InvalidEnclaveAttestationConfig {
+        detail: String,
+    },
 }
 
 /// Lifecycle phase of the Coprocessor Host. Transitions are linear:
@@ -491,4 +605,12 @@ impl CoprocessorHost {
 pub enum HostStartError {
     InvalidConfig(HostConfigError),
     AlreadyShutDown,
+    /// The Nitro adapter configuration is internally inconsistent. Surfaces
+    /// [`coprocessor_nitro_enclave::EnclaveAttestationError::InvalidConfiguration`]
+    /// from the factory ([`HostConfig::build_nitro_attestation_source`]).
+    InvalidEnclaveAttestationConfig(coprocessor_nitro_enclave::EnclaveAttestationError),
+    /// The wrong factory was called for the selected attestation mode (e.g.
+    /// `build_nitro_attestation_source` on a Local config, or
+    /// `build_local_attestation_source` on a Nitro config).
+    EnclaveAttestationModeMismatch,
 }

@@ -514,8 +514,8 @@ fn running_host() -> CoprocessorHost {
 fn running_host_with_retries(max_attempts: u32) -> CoprocessorHost {
     let config = HostConfig {
         deployment_label: "test".to_string(),
-        chain_view: Default::default(),
         retry_policy: RetryPolicy { max_attempts },
+        ..HostConfig::for_local_development()
     };
     let mut host = CoprocessorHost::new(config);
     host.start().unwrap();

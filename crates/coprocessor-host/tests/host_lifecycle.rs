@@ -37,6 +37,11 @@ fn host_starts_with_local_development_config_and_loads_handle_graph_core() {
 }
 
 #[test]
+fn host_config_default_is_local_development_config() {
+    assert_eq!(HostConfig::default(), HostConfig::for_local_development());
+}
+
+#[test]
 fn host_readiness_distinguishes_configuration_loaded_from_all_dependencies_ready() {
     let mut host = CoprocessorHost::new(HostConfig::for_local_development());
     host.start().unwrap();
@@ -75,8 +80,7 @@ fn host_readiness_distinguishes_configuration_loaded_from_all_dependencies_ready
 fn host_rejects_invalid_configuration_before_starting() {
     let invalid = HostConfig {
         deployment_label: "   ".to_string(),
-        chain_view: Default::default(),
-        retry_policy: Default::default(),
+        ..HostConfig::for_local_development()
     };
     let mut host = CoprocessorHost::new(invalid);
 
@@ -149,8 +153,7 @@ fn validate_config_accepts_local_development_and_rejects_empty_label() {
     CoprocessorHost::validate_config(&HostConfig::for_local_development()).unwrap();
     let err = CoprocessorHost::validate_config(&HostConfig {
         deployment_label: String::new(),
-        chain_view: Default::default(),
-        retry_policy: Default::default(),
+        ..HostConfig::for_local_development()
     })
     .unwrap_err();
     assert_eq!(err, HostConfigError::EmptyDeploymentLabel);
@@ -160,8 +163,8 @@ fn validate_config_accepts_local_development_and_rejects_empty_label() {
 fn validate_config_rejects_zero_resolution_attempts() {
     let err = CoprocessorHost::validate_config(&HostConfig {
         deployment_label: "test".to_string(),
-        chain_view: Default::default(),
         retry_policy: RetryPolicy { max_attempts: 0 },
+        ..HostConfig::for_local_development()
     })
     .unwrap_err();
 
