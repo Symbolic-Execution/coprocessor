@@ -13,7 +13,8 @@
 //! it does not reject non-canonical (non-shortest-form) integer and length
 //! encodings on decode, requiring a hand-written guard that reproduces the
 //! existing `read_header` check. The manual implementation was retained.
-//! See `docs/cbor-spike-decision.md` for the full rationale.
+//! See the repository-level `docs/cbor-spike-decision.md` for the full
+//! rationale.
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct DomainId(pub [u8; 32]);
