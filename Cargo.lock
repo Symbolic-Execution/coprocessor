@@ -26,6 +26,7 @@ name = "coprocessor-host"
 version = "0.1.0"
 dependencies = [
  "coprocessor-ciphertext-binding",
+ "coprocessor-enclave-runtime",
  "coprocessor-handle-graph-core",
  "coprocessor-mpc-client",
  "coprocessor-nitro-enclave",

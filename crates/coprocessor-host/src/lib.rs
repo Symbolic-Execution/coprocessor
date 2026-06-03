@@ -13,11 +13,12 @@
 
 use std::collections::BTreeSet;
 
+use coprocessor_enclave_runtime::EnclaveRuntime;
 use coprocessor_handle_graph_core::{
     HandleGraphCore, HandleKey, HandlePersistence, PlaintextMaterializer,
 };
 use coprocessor_mpc_client::{EnclaveCiphertextV1, MpcToEnclaveSource};
-use coprocessor_nitro_enclave::EnclaveAttestationSource;
+use coprocessor_nitro_enclave::{EnclaveAttestationMaterial, EnclaveAttestationSource};
 
 mod internal_api;
 
@@ -42,6 +43,10 @@ mod to_enclave_transformation;
 pub use to_enclave_transformation::{
     transform_resolution_task_inputs, TransformResolutionInputsError,
 };
+
+mod resolve_enclave;
+
+pub use resolve_enclave::ResolveClaimedTaskError;
 
 const ALL_DEPENDENCIES: [DependencyName; 3] = [
     DependencyName::SymVmEventSurface,
@@ -402,6 +407,37 @@ impl CoprocessorHost {
     /// becomes eligible again only after the in-flight work returns.
     pub fn release_resolution_task(&mut self, handle_key: &HandleKey) -> bool {
         self.resolution_claims.release(handle_key)
+    }
+
+    /// Execute one claimed Resolution Task through the Enclave boundary and
+    /// materialize the result into the Handle Graph.
+    ///
+    /// Takes the scheduler `task` and the `input_ciphertexts` produced by
+    /// [`Self::transform_resolution_task_inputs`], builds the enclave-runtime
+    /// [`ResolutionTask`], calls `enclave.execute`, bridges the
+    /// [`EnclaveExecutionOutcome`] into core domain types (encoding
+    /// `SystemCiphertextV1` via `.encode()` and the Materialization Receipt
+    /// via a minimal deterministic byte encoding), and transitions the Pending
+    /// Derived Handle to Ready. On success the scheduler claim is released.
+    ///
+    /// On [`ResolveClaimedTaskError::EnclaveExecutionFailed`] the Derived
+    /// Handle remains Pending — no Handle Graph state changes. Failed-state
+    /// classification and retry policy are handled by issue #41.
+    pub fn resolve_claimed_task(
+        &mut self,
+        task: &ResolutionTask,
+        input_ciphertexts: Vec<EnclaveCiphertextV1>,
+        attestation: &EnclaveAttestationMaterial,
+        enclave: &dyn EnclaveRuntime,
+    ) -> Result<HandleStateView, ResolveClaimedTaskError> {
+        resolve_enclave::resolve_claimed_task(
+            task,
+            input_ciphertexts,
+            attestation,
+            enclave,
+            &mut self.handle_graph_core,
+            &mut self.resolution_claims,
+        )
     }
 
     fn project_handle_state(&self, handle_key: &HandleKey) -> HandleStateView {

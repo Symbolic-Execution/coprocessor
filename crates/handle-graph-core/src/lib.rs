@@ -196,6 +196,22 @@ pub struct OrphanDiscardOutcome {
     pub cascade_tombstoned: Vec<HandleKey>,
 }
 
+/// Typed rejection reasons for [`HandleGraphCore::materialize_derived_handle`].
+/// Every variant is safe to surface to the Coprocessor Host: none embed
+/// ciphertext bytes, wrapped keys, or plaintext.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MaterializeDerivedError {
+    /// No Handle Record exists for the given Handle Key.
+    UnknownHandle,
+    /// The Handle Record exists but has been tombstoned by Orphan Discard.
+    Tombstoned,
+    /// The Handle Record's lineage is Source, not Derived. Only Derived
+    /// Handles can be materialized through Enclave Execution.
+    NotDerived,
+    /// The Handle Record is not in the Pending state (already Ready or Failed).
+    NotPending,
+}
+
 /// Snapshot of a Pending Derived Handle whose ordered input Handles are all
 /// canonical and Ready. Carries everything a future Resolution Scheduler needs
 /// to build a Resolution Task without re-walking the graph: the target Handle
@@ -452,6 +468,62 @@ impl HandleGraphCore {
             .values()
             .filter_map(|record| self.readiness_for(record))
             .collect()
+    }
+
+    /// Transition a Pending Derived Handle Record to Ready by binding the
+    /// supplied `system_ciphertext` and `materialization_receipt`. This is the
+    /// only path from Pending to Ready for Derived Handles; the invariant is
+    /// enforced here and nowhere else.
+    ///
+    /// Returns the updated [`HandleRecord`] on success. Returns a typed
+    /// [`MaterializeDerivedError`] when the handle key is unknown, tombstoned,
+    /// not Derived-lineage, or not in the Pending state. On error the record
+    /// is left unchanged.
+    pub fn materialize_derived_handle(
+        &mut self,
+        handle_key: &HandleKey,
+        system_ciphertext: SystemCiphertextV1,
+        materialization_receipt: MaterializationReceipt,
+    ) -> Result<HandleRecord, MaterializeDerivedError> {
+        let record = self
+            .records
+            .get_mut(handle_key)
+            .ok_or(MaterializeDerivedError::UnknownHandle)?;
+
+        if record.is_tombstoned {
+            return Err(MaterializeDerivedError::Tombstoned);
+        }
+
+        if !matches!(record.lineage, HandleLineage::Derived { .. }) {
+            return Err(MaterializeDerivedError::NotDerived);
+        }
+
+        if record.state != HandleState::Pending {
+            return Err(MaterializeDerivedError::NotPending);
+        }
+
+        record.state = HandleState::Ready {
+            system_ciphertext,
+            materialization_receipt,
+        };
+
+        Ok(record.clone())
+    }
+
+    /// Same as [`HandleGraphCore::materialize_derived_handle`] but mirrors the
+    /// updated Ready record into `persistence` on success. Follows the same
+    /// write-through pattern as [`HandleGraphCore::apply_chain_event_with_persistence`].
+    pub fn materialize_derived_handle_with_persistence<P: HandlePersistence>(
+        &mut self,
+        handle_key: &HandleKey,
+        system_ciphertext: SystemCiphertextV1,
+        materialization_receipt: MaterializationReceipt,
+        persistence: &mut P,
+    ) -> Result<HandleRecord, MaterializeDerivedError> {
+        let record =
+            self.materialize_derived_handle(handle_key, system_ciphertext, materialization_receipt)?;
+        persistence.put_handle_record(record.clone());
+        Ok(record)
     }
 
     fn readiness_for(&self, record: &HandleRecord) -> Option<ResolutionReadiness> {
