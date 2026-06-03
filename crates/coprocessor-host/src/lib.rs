@@ -35,6 +35,12 @@ mod resolution_scheduler;
 pub use resolution_scheduler::ResolutionTask;
 use resolution_scheduler::ResolutionTaskClaims;
 
+mod to_enclave_transformation;
+
+pub use to_enclave_transformation::{
+    transform_resolution_task_inputs, TransformResolutionInputsError,
+};
+
 const ALL_DEPENDENCIES: [DependencyName; 3] = [
     DependencyName::SymVmEventSurface,
     DependencyName::Mpc,
