@@ -18,9 +18,12 @@ cp .sandcastle/.env.example .sandcastle/.env
 Build the Sandcastle Docker image:
 
 ```sh
-npx sandcastle docker build-image \
-  --image-name sandcastle:coprocessor \
-  --dockerfile .sandcastle/Dockerfile
+docker build \
+  --build-arg AGENT_UID=$(id -u) \
+  --build-arg AGENT_GID=$(id -g) \
+  -t sandcastle:coprocessor \
+  -f .sandcastle/Dockerfile \
+  .
 ```
 
 Check configuration:

@@ -21,6 +21,4 @@
 ## Architecture
 
 - Design for deep modules: small stable interfaces hiding real behavior.
-- Keep raw chain/RPC, persistence, MPC, Enclave runtime, and HTTP concerns out
-  of the Handle Graph Core unless an issue explicitly brings them in.
 - Respect ADRs in `docs/adr/`.
