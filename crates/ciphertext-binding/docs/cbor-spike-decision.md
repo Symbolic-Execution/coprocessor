@@ -1,7 +1,7 @@
-# CBOR Dependency Spike — Decision Record
+# CBOR Dependency Spike - Decision Record
 
 **Issue:** #84  
-**Outcome:** ABANDON — manual CBOR implementation retained
+**Outcome:** ABANDON - manual CBOR implementation retained
 
 ## What was evaluated
 
@@ -15,7 +15,7 @@ reader/writer in `src/lib.rs` (the `Reader` struct and `write_*` helpers).
 | (a) Encoder output byte-identical for uint, array, bstr, tstr | **PASS** |
 | (b) Non-canonical integer/length rejection on decode (no glue) | **FAIL** |
 | (c) Malformed/truncated rejection | PASS |
-| (d) AAD↔envelope binding as domain check | not applicable to codec |
+| (d) AAD-to-envelope binding as domain check | not applicable to codec |
 | (e) Errors carry no payload bytes | not applicable (decode rejected at (b)) |
 | (f) Net meaningful code deletion | blocked by (b) |
 
@@ -34,7 +34,7 @@ minicbor's decoder accepts all of these without error. From the decoder source:
 pub fn u8(&mut self) -> Result<u8, Error> {
     match self.read()? {
         n @ 0 ..= 0x17 => Ok(n),   // direct form
-        0x18           => self.read(),  // accepts 0x18 0x01 — no shortest-form check
+        0x18           => self.read(),  // accepts 0x18 0x01; no shortest-form check
         0x19           => self.read_array().map(u16::from_be_bytes).and_then(...),
         ...
     }
@@ -42,7 +42,7 @@ pub fn u8(&mut self) -> Result<u8, Error> {
 ```
 
 This was verified empirically by a spike test that fed non-canonical encodings
-to `Decoder::u8()`, `Decoder::bytes()`, and `Decoder::array()` — all returned
+to `Decoder::u8()`, `Decoder::bytes()`, and `Decoder::array()`; all returned
 `Ok`, confirming that no rejection occurs without a hand-written guard.
 
 ## Why this is a blocking gap
@@ -51,7 +51,7 @@ Canonical (shortest-form) encoding is a security/protocol invariant for this
 codebase: AAD bytes that are not in canonical form are rejected at decode time
 to prevent ambiguity attacks (two byte sequences that parse to the same value
 but produce different bytes). To maintain this with minicbor, a per-field
-shortest-form check would need to be written after each decode call — which
+shortest-form check would need to be written after each decode call, which
 duplicates the existing `read_header` logic field-by-field rather than once
 at the header level. That glue volume negates the code-deletion benefit and
 re-introduces surface for the same class of bug the current implementation
