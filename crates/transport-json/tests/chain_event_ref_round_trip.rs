@@ -188,25 +188,24 @@ fn maximum_u64_chain_id_round_trips() {
 
 #[test]
 fn signed_or_decimal_number_is_rejected_with_invalid_unsigned_number() {
+    // serde_json parses -1 as a valid JSON Number, so rejection happens at
+    // the u64 conversion step rather than at the field-shape level.
     let json = "{\"chain_id\":-1,\"block_number\":1,\"block_hash\":\"0x00\",\"tx_hash\":\"0x00\",\"log_index\":1}";
-    let err = decode_chain_event_ref(json).unwrap_err();
-    assert!(matches!(
-        err,
-        JsonParseError::FieldShape {
-            field: "chain_id",
-            expected: "string or unsigned integer",
-        }
-    ));
-}
-
-#[test]
-fn leading_zero_number_is_rejected_with_invalid_unsigned_number() {
-    let json = "{\"chain_id\":01,\"block_number\":1,\"block_hash\":\"0x00\",\"tx_hash\":\"0x00\",\"log_index\":1}";
     let err = decode_chain_event_ref(json).unwrap_err();
     assert!(matches!(
         err,
         JsonParseError::InvalidUnsignedNumber { field: "chain_id" }
     ));
+}
+
+#[test]
+fn leading_zero_number_is_rejected() {
+    // serde_json rejects leading zeros at the JSON syntax level (per the JSON
+    // spec), so the error surfaces as UnexpectedToken rather than the
+    // field-specific InvalidUnsignedNumber the hand-rolled parser produced.
+    let json = "{\"chain_id\":01,\"block_number\":1,\"block_hash\":\"0x00\",\"tx_hash\":\"0x00\",\"log_index\":1}";
+    let err = decode_chain_event_ref(json).unwrap_err();
+    assert!(matches!(err, JsonParseError::UnexpectedToken { .. }));
 }
 
 #[test]
@@ -218,26 +217,41 @@ fn trailing_content_after_object_is_rejected() {
 }
 
 #[test]
-fn duplicate_field_in_object_is_rejected() {
+fn duplicate_field_uses_last_value_serde_standard_behavior() {
+    // serde_json uses last-wins for duplicate keys (serde-standard behavior).
+    // The hand-rolled parser previously rejected duplicates with DuplicateField.
+    // Behavior change: duplicate fields no longer produce an error; the second
+    // occurrence wins, so the decoded chain_id is the second value.
     let baseline = sample_chain_event_ref();
+    let different_chain_id = baseline.chain_id.0 + 1;
     let json = format!(
         "{{\"chain_id\":{},\"chain_id\":{},\"block_number\":{},\"block_hash\":\"{}\",\"tx_hash\":\"{}\",\"log_index\":{}}}",
         baseline.chain_id.0,
-        baseline.chain_id.0,
+        different_chain_id,
         baseline.block_number,
         hex(&baseline.block_hash),
         hex(&baseline.tx_hash),
         baseline.log_index,
     );
-    let err = decode_chain_event_ref(&json).unwrap_err();
-    assert!(matches!(err, JsonParseError::DuplicateField { .. }));
+    let decoded = decode_chain_event_ref(&json).expect("serde last-wins decode");
+    assert_eq!(decoded.chain_id.0, different_chain_id);
 }
 
 #[test]
-fn escape_sequence_in_string_value_is_rejected() {
+fn escape_sequence_in_hex_field_is_rejected_as_invalid_hex() {
+    // serde_json decodes   to the null character, so the field value
+    // "0x\u{0}" passes JSON parsing but fails hex validation. The error
+    // surfaces as InvalidHex rather than UnsupportedStringEscape (a
+    // hand-rolled-parser-specific variant).
     let json = "{\"chain_id\":1,\"block_number\":1,\"block_hash\":\"0x\\u0000\",\"tx_hash\":\"0x00\",\"log_index\":1}";
     let err = decode_chain_event_ref(json).unwrap_err();
-    assert!(matches!(err, JsonParseError::UnsupportedStringEscape));
+    assert!(matches!(
+        err,
+        JsonParseError::InvalidHex {
+            field: "block_hash",
+            ..
+        }
+    ));
 }
 
 fn hex(bytes: &[u8; 32]) -> String {

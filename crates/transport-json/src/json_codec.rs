@@ -101,15 +101,6 @@ fn write_string_literal(out: &mut String, value: &str) {
 // Top-level parsers
 // ---------------------------------------------------------------------------
 
-pub fn parse_string(text: &str) -> Result<String, JsonParseError> {
-    let mut reader = Reader::new(text);
-    reader.skip_whitespace();
-    let value = reader.read_string_value()?;
-    reader.skip_whitespace();
-    reader.require_end()?;
-    Ok(value)
-}
-
 pub fn parse_object(text: &str) -> Result<JsonObject, JsonParseError> {
     let mut reader = Reader::new(text);
     reader.skip_whitespace();

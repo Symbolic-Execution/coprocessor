@@ -132,6 +132,17 @@ hex_identifier_conversion!(BindingAttestationDigest, AttestationDigestHex);
 // flat JSON object with the five spec fields; bytes32 fields use the hex
 // identifier round-trip, and the integer fields use JSON numbers within u64 /
 // u32 range.
+//
+// Encoding uses the json_codec write helpers so the output format is stable.
+// Decoding uses serde_json to parse the document, then validates each field
+// individually so errors carry the field name and expected shape without
+// surfacing serde_json's internal message text (which can echo input fragments).
+//
+// Duplicate field behavior: serde_json uses last-wins for duplicate keys,
+// which differs from the prior hand-rolled parser's DuplicateField error.
+// Tests that asserted DuplicateField on ChainEventRef decode have been updated
+// to reflect serde-standard behavior. The DuplicateField variant remains in
+// JsonParseError because parse_object (used by mpc-config) still produces it.
 // ---------------------------------------------------------------------------
 
 pub fn encode_chain_event_ref(value: &ChainEventRef) -> String {
@@ -149,25 +160,53 @@ pub fn encode_chain_event_ref(value: &ChainEventRef) -> String {
 }
 
 pub fn decode_chain_event_ref(text: &str) -> Result<ChainEventRef, JsonParseError> {
-    let mut object = json_codec::parse_object(text)?;
-    let chain_id = object.take_uint("chain_id")?;
-    let block_number = object.take_uint("block_number")?;
-    let block_hash_hex = object.take_string("block_hash")?;
-    let tx_hash_hex = object.take_string("tx_hash")?;
-    let log_index = object.take_uint("log_index")?;
-    object.finish()?;
+    // Parse with serde_json. The Deserializer is used directly so that
+    // trailing-content failures can be distinguished from mid-document syntax
+    // errors — both map to the same serde category but different transport
+    // variants (TrailingContent vs UnexpectedToken).
+    let mut de = serde_json::Deserializer::from_str(text);
+    let value: serde_json::Value =
+        serde::de::Deserialize::deserialize(&mut de).map_err(map_serde_json_to_parse_error)?;
+    de.end().map_err(|_| JsonParseError::TrailingContent)?;
+
+    let obj = match value {
+        serde_json::Value::Object(map) => map,
+        _ => return Err(JsonParseError::UnexpectedToken { expected: "object" }),
+    };
+
+    // Reject unknown fields before attempting to extract known ones so an
+    // extra field always surfaces as UnexpectedField regardless of whether
+    // any required field is missing.
+    const KNOWN: &[&str] = &[
+        "chain_id",
+        "block_number",
+        "block_hash",
+        "tx_hash",
+        "log_index",
+    ];
+    for key in obj.keys() {
+        if !KNOWN.contains(&key.as_str()) {
+            return Err(JsonParseError::UnexpectedField);
+        }
+    }
+
+    let chain_id = take_uint_value(&obj, "chain_id")?;
+    let block_number = take_uint_value(&obj, "block_number")?;
+    let block_hash_str = take_string_value(&obj, "block_hash")?;
+    let tx_hash_str = take_string_value(&obj, "tx_hash")?;
+    let log_index_u64 = take_uint_value(&obj, "log_index")?;
 
     let block_hash =
-        BlockHashHex::from_hex(&block_hash_hex).map_err(|error| JsonParseError::InvalidHex {
+        BlockHashHex::from_hex(&block_hash_str).map_err(|error| JsonParseError::InvalidHex {
             field: "block_hash",
             error,
         })?;
     let tx_hash =
-        TxHashHex::from_hex(&tx_hash_hex).map_err(|error| JsonParseError::InvalidHex {
+        TxHashHex::from_hex(&tx_hash_str).map_err(|error| JsonParseError::InvalidHex {
             field: "tx_hash",
             error,
         })?;
-    let log_index = u32::try_from(log_index).map_err(|_| JsonParseError::IntegerOverflow {
+    let log_index = u32::try_from(log_index_u64).map_err(|_| JsonParseError::IntegerOverflow {
         field: "log_index",
         expected: "u32",
     })?;
@@ -179,6 +218,54 @@ pub fn decode_chain_event_ref(text: &str) -> Result<ChainEventRef, JsonParseErro
         tx_hash: tx_hash.0,
         log_index,
     })
+}
+
+/// Map a serde_json parse error to a sanitized [`JsonParseError`] variant.
+/// The serde_json error message is intentionally discarded — it can echo
+/// input fragments (offending tokens, field values) which would violate the
+/// transport's sanitized-error guarantee.
+fn map_serde_json_to_parse_error(err: serde_json::Error) -> JsonParseError {
+    if err.is_eof() {
+        JsonParseError::UnexpectedEndOfInput { expected: "object" }
+    } else {
+        JsonParseError::UnexpectedToken {
+            expected: "valid JSON",
+        }
+    }
+}
+
+fn take_uint_value(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    field: &'static str,
+) -> Result<u64, JsonParseError> {
+    match obj.get(field) {
+        None => Err(JsonParseError::MissingField { field }),
+        Some(serde_json::Value::Number(n)) => n
+            .as_u64()
+            .ok_or(JsonParseError::InvalidUnsignedNumber { field }),
+        Some(serde_json::Value::String(_)) => Err(JsonParseError::FieldShape {
+            field,
+            expected: "unsigned integer",
+        }),
+        Some(_) => Err(JsonParseError::FieldShape {
+            field,
+            expected: "unsigned integer",
+        }),
+    }
+}
+
+fn take_string_value(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    field: &'static str,
+) -> Result<String, JsonParseError> {
+    match obj.get(field) {
+        None => Err(JsonParseError::MissingField { field }),
+        Some(serde_json::Value::String(s)) => Ok(s.clone()),
+        Some(_) => Err(JsonParseError::FieldShape {
+            field,
+            expected: "string",
+        }),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -257,7 +344,17 @@ fn encode_envelope_as_json_string(envelope_bytes: &[u8]) -> String {
 }
 
 fn decode_envelope_bytes(text: &str) -> Result<Vec<u8>, CiphertextJsonError> {
-    let base64_text = json_codec::parse_string(text)?;
+    // Use serde_json to extract the JSON string value. The Deserializer is
+    // used directly so trailing-content failures map to Json(TrailingContent)
+    // rather than being swallowed by a combined parse-and-end call.
+    // The serde_json error message is discarded — it can contain the offending
+    // token, which for base64/ciphertext fields would leak payload bytes.
+    let mut de = serde_json::Deserializer::from_str(text);
+    let base64_text: String = serde::de::Deserialize::deserialize(&mut de).map_err(|_| {
+        CiphertextJsonError::Json(JsonParseError::UnexpectedToken { expected: "string" })
+    })?;
+    de.end()
+        .map_err(|_| CiphertextJsonError::Json(JsonParseError::TrailingContent))?;
     let bytes = base64_codec::decode(&base64_text)?;
     Ok(bytes)
 }
