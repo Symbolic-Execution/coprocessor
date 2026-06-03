@@ -19,6 +19,8 @@ fn main() -> ExitCode {
         return match err {
             HostStartError::InvalidConfig(_) => ExitCode::from(2),
             HostStartError::AlreadyShutDown => ExitCode::from(3),
+            HostStartError::InvalidEnclaveAttestationConfig(_) => ExitCode::from(4),
+            HostStartError::EnclaveAttestationModeMismatch => ExitCode::from(5),
         };
     }
 
