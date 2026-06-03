@@ -154,7 +154,10 @@ fn reorg_orphan_tombstones_source_and_cascades_to_ready_derived_both_unknown_via
 
     // Unaffected sibling source remains Ready.
     assert!(
-        matches!(host.get_handle_state(&source_b), HandleStateView::Ready { .. }),
+        matches!(
+            host.get_handle_state(&source_b),
+            HandleStateView::Ready { .. }
+        ),
         "unaffected source_b must remain Ready"
     );
 }
@@ -287,9 +290,8 @@ fn restart_replaying_consumed_events_is_idempotent_by_chain_event_ref() {
     let persisted_consumed_event_count = store.consumed_events().len();
     let mut host = boot_restored_host(&store);
 
-    let replay_report = host.ingest_chain_events(&mut FixedChainSource::new(vec![
-        ev_a, ev_b, ev_derived,
-    ]));
+    let replay_report =
+        host.ingest_chain_events(&mut FixedChainSource::new(vec![ev_a, ev_b, ev_derived]));
     assert_eq!(
         replay_report.recorded, 0,
         "replay after restart must not create new Handle Records"
@@ -389,15 +391,24 @@ fn restart_resolution_readiness_and_api_state_match_pre_restart_state() {
 
     // All three handles reflect their persisted state after restore.
     assert!(
-        matches!(host.get_handle_state(&source_a), HandleStateView::Ready { .. }),
+        matches!(
+            host.get_handle_state(&source_a),
+            HandleStateView::Ready { .. }
+        ),
         "source_a must be Ready after restart"
     );
     assert!(
-        matches!(host.get_handle_state(&source_b), HandleStateView::Ready { .. }),
+        matches!(
+            host.get_handle_state(&source_b),
+            HandleStateView::Ready { .. }
+        ),
         "source_b must be Ready after restart"
     );
     assert!(
-        matches!(host.get_handle_state(&derived), HandleStateView::Ready { .. }),
+        matches!(
+            host.get_handle_state(&derived),
+            HandleStateView::Ready { .. }
+        ),
         "Ready derived must stay Ready after restart"
     );
     assert!(
@@ -490,7 +501,10 @@ fn restart_tombstoned_before_restart_remains_tombstoned_after_restore() {
         "cascade-tombstoned derived must also be Unknown via resolve_handle after restart"
     );
     assert!(
-        matches!(host.get_handle_state(&source_b), HandleStateView::Ready { .. }),
+        matches!(
+            host.get_handle_state(&source_b),
+            HandleStateView::Ready { .. }
+        ),
         "untouched source_b must remain Ready after restart"
     );
 
@@ -521,6 +535,164 @@ fn restart_tombstoned_before_restart_remains_tombstoned_after_restore() {
         host.handle_graph_core().resolution_readiness().is_empty(),
         "tombstoned handles must not appear in Resolution Readiness after restart"
     );
+}
+
+/// Restores a mixed persisted graph in one process-restart scenario: one
+/// Derived Handle is already Ready, one remains Pending/claimable, and one
+/// branch was tombstoned by Orphan Discard before restart. Replaying every
+/// consumed Chain Event after restore must be idempotent and must not change
+/// the Coordinator-facing projections or audit provenance.
+#[test]
+fn restart_restores_mixed_ready_pending_tombstoned_state_and_replay_is_idempotent() {
+    let mut store = InMemoryHandlePersistence::new();
+    let mut pre = HandleGraphCore::new();
+
+    let ready_a = handle_key(0x01);
+    let ready_b = handle_key(0x02);
+    let ready_derived = handle_key(0x10);
+    let ready_events = [
+        imported_event(
+            ready_a,
+            HandleType::Suint256,
+            well_formed_ciphertext(ready_a, "suint256"),
+            event_ref(1, 1),
+        ),
+        imported_event(
+            ready_b,
+            HandleType::Suint256,
+            well_formed_ciphertext(ready_b, "suint256"),
+            event_ref(1, 2),
+        ),
+        derived_event(
+            ready_derived,
+            OperationCode::Add,
+            HandleType::Suint256,
+            vec![ready_a, ready_b],
+            event_ref(2, 1),
+        ),
+    ];
+
+    let pending_a = handle_key(0x03);
+    let pending_b = handle_key(0x04);
+    let pending_derived = handle_key(0x11);
+    let pending_events = [
+        imported_event(
+            pending_a,
+            HandleType::Suint256,
+            well_formed_ciphertext(pending_a, "suint256"),
+            event_ref(1, 3),
+        ),
+        imported_event(
+            pending_b,
+            HandleType::Suint256,
+            well_formed_ciphertext(pending_b, "suint256"),
+            event_ref(1, 4),
+        ),
+        derived_event(
+            pending_derived,
+            OperationCode::Add,
+            HandleType::Suint256,
+            vec![pending_a, pending_b],
+            event_ref(2, 2),
+        ),
+    ];
+
+    let orphaned_source = handle_key(0x05);
+    let orphaned_sibling = handle_key(0x06);
+    let orphaned_derived = handle_key(0x12);
+    let orphaned_source_ref = event_ref(1, 5);
+    let orphaned_derived_ref = event_ref(2, 3);
+    let orphaned_events = [
+        imported_event(
+            orphaned_source,
+            HandleType::Suint256,
+            well_formed_ciphertext(orphaned_source, "suint256"),
+            orphaned_source_ref,
+        ),
+        imported_event(
+            orphaned_sibling,
+            HandleType::Suint256,
+            well_formed_ciphertext(orphaned_sibling, "suint256"),
+            event_ref(1, 6),
+        ),
+        derived_event(
+            orphaned_derived,
+            OperationCode::Add,
+            HandleType::Suint256,
+            vec![orphaned_source, orphaned_sibling],
+            orphaned_derived_ref,
+        ),
+    ];
+
+    let replay_events: Vec<ChainEvent> = ready_events
+        .iter()
+        .chain(pending_events.iter())
+        .chain(orphaned_events.iter())
+        .cloned()
+        .collect();
+
+    for event in replay_events.iter().cloned() {
+        expect_recorded(pre.apply_chain_event_with_persistence(event, &mut store));
+    }
+
+    pre.materialize_derived_handle_with_persistence(
+        &ready_derived,
+        SystemCiphertextV1(vec![0xCC; 16]),
+        MaterializationReceipt(vec![0xAA; 8]),
+        &mut store,
+    )
+    .expect("ready branch materialization must persist");
+
+    let orphan = pre.apply_orphan_discard_with_persistence(&[orphaned_source_ref], &mut store);
+    assert_eq!(orphan.directly_tombstoned, vec![orphaned_source]);
+    assert_eq!(orphan.cascade_tombstoned, vec![orphaned_derived]);
+
+    let persisted_record_count = store.handle_records().len();
+    let persisted_consumed_event_count = store.consumed_events().len();
+    assert_eq!(persisted_record_count, replay_events.len());
+    assert_eq!(persisted_consumed_event_count, replay_events.len());
+
+    let mut host = boot_restored_host(&store);
+
+    assert_mixed_restart_projection(
+        &mut host,
+        ready_derived,
+        pending_derived,
+        orphaned_source,
+        orphaned_derived,
+    );
+    assert_single_ready_pending_entry(&host, pending_derived);
+    assert_tombstone_audit_ref(&host, orphaned_source, orphaned_source_ref);
+    assert_tombstone_audit_ref(&host, orphaned_derived, orphaned_derived_ref);
+
+    let replay = host.ingest_chain_events(&mut FixedChainSource::new(replay_events));
+    assert_eq!(
+        replay.recorded, 0,
+        "post-restore replay must not create duplicate records"
+    );
+    assert_eq!(
+        replay.idempotent, persisted_consumed_event_count,
+        "post-restore replay must be idempotent for every consumed ChainEventRef"
+    );
+    assert_eq!(replay.duplicates_rejected, 0);
+    assert_eq!(replay.directly_tombstoned, 0);
+    assert_eq!(replay.cascade_tombstoned, 0);
+    assert_eq!(store.handle_records().len(), persisted_record_count);
+    assert_eq!(
+        store.consumed_events().len(),
+        persisted_consumed_event_count
+    );
+
+    assert_mixed_restart_projection(
+        &mut host,
+        ready_derived,
+        pending_derived,
+        orphaned_source,
+        orphaned_derived,
+    );
+    assert_single_ready_pending_entry(&host, pending_derived);
+    assert_tombstone_audit_ref(&host, orphaned_source, orphaned_source_ref);
+    assert_tombstone_audit_ref(&host, orphaned_derived, orphaned_derived_ref);
 }
 
 // ============================================================
@@ -657,6 +829,70 @@ fn expect_recorded(outcome: IngestionOutcome) {
     }
 }
 
+fn assert_mixed_restart_projection(
+    host: &mut CoprocessorHost,
+    ready_derived: HandleKey,
+    pending_derived: HandleKey,
+    orphaned_source: HandleKey,
+    orphaned_derived: HandleKey,
+) {
+    assert!(
+        matches!(
+            host.get_handle_state(&ready_derived),
+            HandleStateView::Ready { .. }
+        ),
+        "Ready Derived Handle must stay Ready after restart/replay"
+    );
+    assert_eq!(
+        host.resolve_handle(RequestId([0x07; 32]), &ready_derived),
+        host.get_handle_state(&ready_derived),
+        "resolve_handle and get_handle_state must agree for Ready handles"
+    );
+    assert_eq!(
+        host.get_handle_state(&pending_derived),
+        HandleStateView::Pending,
+        "Pending Derived Handle must stay Pending after restart/replay"
+    );
+    assert_eq!(
+        host.resolve_handle(RequestId([0x08; 32]), &pending_derived),
+        HandleStateView::Pending,
+        "resolve_handle and get_handle_state must agree for Pending handles"
+    );
+    assert_eq!(
+        host.get_handle_state(&orphaned_source),
+        HandleStateView::Unknown,
+        "directly tombstoned source must stay Unknown after restart/replay"
+    );
+    assert_eq!(
+        host.get_handle_state(&orphaned_derived),
+        HandleStateView::Unknown,
+        "cascade-tombstoned Derived Handle must stay Unknown after restart/replay"
+    );
+}
+
+fn assert_single_ready_pending_entry(host: &CoprocessorHost, expected: HandleKey) {
+    let readiness = host.handle_graph_core().resolution_readiness();
+    assert_eq!(
+        readiness.len(),
+        1,
+        "only the persisted Pending Derived Handle should be claimable"
+    );
+    assert_eq!(readiness[0].handle_key, expected);
+}
+
+fn assert_tombstone_audit_ref(
+    host: &CoprocessorHost,
+    handle_key: HandleKey,
+    expected_ref: ChainEventRef,
+) {
+    let audit = host
+        .handle_graph_core()
+        .handle_record_for_audit(&handle_key)
+        .expect("audit must expose tombstoned record");
+    assert!(audit.is_tombstoned);
+    assert_eq!(audit.event_ref, expected_ref);
+}
+
 // ---------- fake sources ----------
 
 struct FixedChainSource {
@@ -687,7 +923,9 @@ struct OrphanChainSource {
 
 impl OrphanChainSource {
     fn new(orphaned_event_refs: Vec<ChainEventRef>) -> Self {
-        Self { orphaned_event_refs }
+        Self {
+            orphaned_event_refs,
+        }
     }
 }
 
