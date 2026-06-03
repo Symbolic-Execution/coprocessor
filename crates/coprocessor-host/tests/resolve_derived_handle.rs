@@ -508,7 +508,10 @@ fn ready_derived_handle_exposes_structured_receipt_with_correct_fields() {
         .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave)
         .expect("resolve must succeed");
 
-    let HandleStateView::Ready { derived_receipt, .. } = view else {
+    let HandleStateView::Ready {
+        derived_receipt, ..
+    } = view
+    else {
         panic!("expected Ready, got {view:?}");
     };
 
@@ -578,7 +581,10 @@ fn select_structured_receipt_preserves_predicate_when_true_when_false_order() {
         .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave)
         .expect("resolve must succeed");
 
-    let HandleStateView::Ready { derived_receipt, .. } = view else {
+    let HandleStateView::Ready {
+        derived_receipt, ..
+    } = view
+    else {
         panic!("expected Ready, got {view:?}");
     };
     let receipt = derived_receipt.expect("Select Derived Handle must have structured receipt");
@@ -606,7 +612,10 @@ fn source_imported_handle_has_no_derived_receipt() {
 
     let view = host.get_handle_state(&key);
 
-    let HandleStateView::Ready { derived_receipt, .. } = view else {
+    let HandleStateView::Ready {
+        derived_receipt, ..
+    } = view
+    else {
         panic!("expected Ready, got {view:?}");
     };
     assert_eq!(
@@ -648,13 +657,20 @@ fn receipt_round_trip_decode_encode_for_each_arity() {
         let view = host
             .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave)
             .expect("Not resolve");
-        let HandleStateView::Ready { derived_receipt, .. } = view else {
+        let HandleStateView::Ready {
+            derived_receipt, ..
+        } = view
+        else {
             panic!("expected Ready");
         };
         let decoded = derived_receipt.expect("Not must have structured receipt");
         assert_eq!(decoded.operation_code, OperationCode::Not);
-        // Unary: exactly one input key
-        assert_eq!(decoded.input_handle_keys.len(), 1);
+        assert_eq!(decoded.output_handle_key, not_derived);
+        assert_eq!(decoded.input_handle_keys, vec![a]);
+        assert_eq!(
+            decoded.attestation_digest,
+            AttestationDigest([DEFAULT_MEASUREMENT_SEED; 32])
+        );
     }
 
     // Binary: Add (already tested above; verify arity=2 explicitly)
@@ -699,15 +715,91 @@ fn receipt_round_trip_decode_encode_for_each_arity() {
         let view = host
             .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave)
             .expect("Add resolve");
-        let HandleStateView::Ready { derived_receipt, .. } = view else {
+        let HandleStateView::Ready {
+            derived_receipt, ..
+        } = view
+        else {
             panic!("expected Ready");
         };
         let decoded = derived_receipt.expect("Add must have structured receipt");
         assert_eq!(decoded.operation_code, OperationCode::Add);
+        assert_eq!(decoded.output_handle_key, derived);
         assert_eq!(decoded.input_handle_keys, vec![a, b]);
+        assert_eq!(
+            decoded.attestation_digest,
+            AttestationDigest([DEFAULT_MEASUREMENT_SEED; 32])
+        );
     }
 
-    // Ternary: Select is covered by select_structured_receipt_preserves_predicate_when_true_when_false_order
+    {
+        let mut host = running_host();
+        let predicate = handle_key(20);
+        let when_true = handle_key(21);
+        let when_false = handle_key(22);
+        ingest_imported(
+            &mut host,
+            predicate,
+            HandleType::Sbool,
+            well_formed_system_ciphertext(predicate, "sbool"),
+            1,
+            20,
+        );
+        ingest_imported(
+            &mut host,
+            when_true,
+            HandleType::Suint256,
+            well_formed_system_ciphertext(when_true, "suint256"),
+            1,
+            21,
+        );
+        ingest_imported(
+            &mut host,
+            when_false,
+            HandleType::Suint256,
+            well_formed_system_ciphertext(when_false, "suint256"),
+            1,
+            22,
+        );
+        let derived = handle_key(23);
+        ingest_derived(
+            &mut host,
+            derived,
+            OperationCode::Select,
+            HandleType::Suint256,
+            vec![predicate, when_true, when_false],
+            2,
+            1,
+        );
+        let tasks = host.claim_resolution_tasks();
+        let task = &tasks[0];
+        let attestation_source = local_attestation_source();
+        let mpc_server = ProgrammableMpcServer::with_successes(vec![
+            fake_enclave_ciphertext(predicate, 0xD0),
+            fake_enclave_ciphertext(when_true, 0xD1),
+            fake_enclave_ciphertext(when_false, 0xD2),
+        ]);
+        let enclave = FakeEnclaveRuntime::deterministic();
+        let view = host
+            .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave)
+            .expect("Select resolve");
+        let HandleStateView::Ready {
+            derived_receipt, ..
+        } = view
+        else {
+            panic!("expected Ready");
+        };
+        let decoded = derived_receipt.expect("Select must have structured receipt");
+        assert_eq!(decoded.operation_code, OperationCode::Select);
+        assert_eq!(decoded.output_handle_key, derived);
+        assert_eq!(
+            decoded.input_handle_keys,
+            vec![predicate, when_true, when_false]
+        );
+        assert_eq!(
+            decoded.attestation_digest,
+            AttestationDigest([DEFAULT_MEASUREMENT_SEED; 32])
+        );
+    }
 }
 
 // ---------- fixtures ----------

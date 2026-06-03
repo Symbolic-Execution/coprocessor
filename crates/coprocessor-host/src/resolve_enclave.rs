@@ -21,18 +21,14 @@ use coprocessor_ciphertext_binding::{EnclaveCiphertextV1, RequestId};
 use coprocessor_enclave_runtime::{
     EnclaveExecutionError, EnclaveRuntime, ResolutionTask as EnclaveResolutionTask,
 };
-use coprocessor_enclave_runtime::AttestationDigest;
-use coprocessor_handle_graph_core::{
-    ChainId, ContractAddress, HandleGraphCore, HandleId, HandleKey, MaterializationReceipt,
-    MaterializeDerivedError, OperationCode, SystemCiphertextV1,
-};
+use coprocessor_handle_graph_core::{HandleGraphCore, MaterializeDerivedError, SystemCiphertextV1};
 
-use crate::internal_api::DerivedHandleReceiptView;
 use coprocessor_mpc_client::MpcToEnclaveSource;
 use coprocessor_nitro_enclave::{
     EnclaveAttestationError, EnclaveAttestationMaterial, EnclaveAttestationSource,
 };
 
+use crate::derived_receipt::encode_derived_materialization_receipt;
 use crate::internal_api::{project_canonical, HandleStateView};
 use crate::resolution_scheduler::ResolutionTask;
 use crate::resolution_scheduler::ResolutionTaskClaims;
@@ -121,7 +117,7 @@ pub(crate) fn resolve_claimed_task(
     let core_ciphertext = SystemCiphertextV1(outcome.system_ciphertext.encode());
 
     // Bridge: EnclaveMaterializationReceipt -> minimal opaque bytes
-    let core_receipt = encode_materialization_receipt(&outcome.receipt);
+    let core_receipt = encode_derived_materialization_receipt(&outcome.receipt);
 
     if let Err(error) =
         core.materialize_derived_handle(&task.output_handle_key, core_ciphertext, core_receipt)
@@ -168,134 +164,6 @@ fn build_enclave_task(
         output_handle_type: task.output_handle_type,
         input_handle_keys: task.input_handle_keys.clone(),
         input_ciphertexts,
-    }
-}
-
-/// Minimal deterministic encoding of an `EnclaveMaterializationReceipt` into
-/// opaque bytes suitable for the core's `MaterializationReceipt(Vec<u8>)`.
-///
-/// Format (all big-endian):
-///   1 byte  : OperationCode discriminant
-///  60 bytes : output Handle Key (8 chain_id + 20 contract_address + 32 handle_id)
-///   4 bytes : input count (u32)
-///  60 bytes : each input Handle Key
-///  32 bytes : attestation digest
-///
-/// Contains only non-secret evidence. Never embeds ciphertext, wrapped keys,
-/// raw attestation documents, or enclave private key material.
-fn encode_materialization_receipt(
-    receipt: &coprocessor_enclave_runtime::EnclaveMaterializationReceipt,
-) -> MaterializationReceipt {
-    let mut bytes = Vec::new();
-    bytes.push(op_code_byte(receipt.operation_code));
-    encode_handle_key_into(&mut bytes, &receipt.output_handle_key);
-    bytes.extend_from_slice(&(receipt.input_handle_keys.len() as u32).to_be_bytes());
-    for input_key in &receipt.input_handle_keys {
-        encode_handle_key_into(&mut bytes, input_key);
-    }
-    bytes.extend_from_slice(&receipt.attestation_digest.0);
-    MaterializationReceipt(bytes)
-}
-
-/// Decode bytes produced by [`encode_materialization_receipt`] into structured
-/// receipt fields. Returns `None` if the bytes are malformed or too short.
-///
-/// Co-located with `encode_materialization_receipt` so the format and its
-/// inverse stay together — a deletion test: removing the encoder forces every
-/// reader to re-learn the byte layout.
-pub(crate) fn decode_materialization_receipt(
-    receipt: &MaterializationReceipt,
-) -> Option<DerivedHandleReceiptView> {
-    let bytes = &receipt.0;
-    let mut pos = 0;
-
-    let op_code = op_code_from_byte(*bytes.get(pos)?)?;
-    pos += 1;
-
-    let output_handle_key = decode_handle_key(bytes, &mut pos)?;
-
-    if pos + 4 > bytes.len() {
-        return None;
-    }
-    let input_count = u32::from_be_bytes(bytes[pos..pos + 4].try_into().ok()?) as usize;
-    pos += 4;
-
-    let mut input_handle_keys = Vec::with_capacity(input_count);
-    for _ in 0..input_count {
-        input_handle_keys.push(decode_handle_key(bytes, &mut pos)?);
-    }
-
-    if pos + 32 > bytes.len() {
-        return None;
-    }
-    let digest: [u8; 32] = bytes[pos..pos + 32].try_into().ok()?;
-    pos += 32;
-
-    if pos != bytes.len() {
-        return None;
-    }
-
-    Some(DerivedHandleReceiptView {
-        operation_code: op_code,
-        output_handle_key,
-        input_handle_keys,
-        attestation_digest: AttestationDigest(digest),
-    })
-}
-
-fn decode_handle_key(bytes: &[u8], pos: &mut usize) -> Option<HandleKey> {
-    if *pos + 60 > bytes.len() {
-        return None;
-    }
-    let chain_id = u64::from_be_bytes(bytes[*pos..*pos + 8].try_into().ok()?);
-    *pos += 8;
-    let contract_address: [u8; 20] = bytes[*pos..*pos + 20].try_into().ok()?;
-    *pos += 20;
-    let handle_id: [u8; 32] = bytes[*pos..*pos + 32].try_into().ok()?;
-    *pos += 32;
-    Some(HandleKey {
-        chain_id: ChainId(chain_id),
-        contract_address: ContractAddress(contract_address),
-        handle_id: HandleId(handle_id),
-    })
-}
-
-fn encode_handle_key_into(out: &mut Vec<u8>, key: &HandleKey) {
-    out.extend_from_slice(&key.chain_id.0.to_be_bytes());
-    out.extend_from_slice(&key.contract_address.0);
-    out.extend_from_slice(&key.handle_id.0);
-}
-
-fn op_code_from_byte(byte: u8) -> Option<OperationCode> {
-    match byte {
-        1 => Some(OperationCode::Add),
-        2 => Some(OperationCode::Sub),
-        3 => Some(OperationCode::Eq),
-        4 => Some(OperationCode::Lt),
-        5 => Some(OperationCode::Lte),
-        6 => Some(OperationCode::Gt),
-        7 => Some(OperationCode::Gte),
-        8 => Some(OperationCode::And),
-        9 => Some(OperationCode::Or),
-        10 => Some(OperationCode::Not),
-        11 => Some(OperationCode::Select),
-        _ => None,
-    }
-}
-
-fn op_code_byte(op: OperationCode) -> u8 {
-    match op {
-        OperationCode::Add => 1,
-        OperationCode::Sub => 2,
-        OperationCode::Eq => 3,
-        OperationCode::Lt => 4,
-        OperationCode::Lte => 5,
-        OperationCode::Gt => 6,
-        OperationCode::Gte => 7,
-        OperationCode::And => 8,
-        OperationCode::Or => 9,
-        OperationCode::Not => 10,
-        OperationCode::Select => 11,
     }
 }
 

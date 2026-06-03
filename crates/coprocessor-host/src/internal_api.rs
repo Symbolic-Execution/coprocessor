@@ -5,24 +5,12 @@
 //! collapse to `Unknown`, `Ready` keeps its ciphertext and receipt payloads,
 //! and `Failed` exposes only a stable category.
 
-use coprocessor_enclave_runtime::AttestationDigest;
 use coprocessor_handle_graph_core::{
-    FailureReason, HandleKey, HandleLineage, HandleRecord, HandleState, MaterializationReceipt,
-    OperationCode, SystemCiphertextV1,
+    FailureReason, HandleLineage, HandleRecord, HandleState, MaterializationReceipt,
+    SystemCiphertextV1,
 };
 
-/// Structured, non-secret Materialization Receipt for a Ready Derived Handle.
-/// Contains only audit evidence: the OperationCode evaluated, the output Handle
-/// Key, the ordered input Handle Keys, and the attestation digest used for
-/// Enclave Execution. Never contains plaintext, ciphertext bytes, wrapped keys,
-/// or raw Attestation documents.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DerivedHandleReceiptView {
-    pub operation_code: OperationCode,
-    pub output_handle_key: HandleKey,
-    pub input_handle_keys: Vec<HandleKey>,
-    pub attestation_digest: AttestationDigest,
-}
+use crate::derived_receipt::{decode_derived_materialization_receipt, DerivedHandleReceiptView};
 
 /// Coordinator-facing view of a Canonical Handle Record. This is the response
 /// shape the Internal Coordinator API will serialize for GET Handle State; the
@@ -72,7 +60,7 @@ pub enum HandleStateFailureCategory {
 /// For Ready Derived Handles the opaque `materialization_receipt` bytes are
 /// decoded into a structured [`DerivedHandleReceiptView`]. For Source Handles
 /// (Imported/Plaintext) the receipt bytes are surfaced as-is with
-/// `derived_receipt: None` — fixture bytes share no format with the derived
+/// `derived_receipt: None`; fixture bytes share no format with the derived
 /// encoding and must not be decoded.
 pub(crate) fn project_canonical(record: Option<&HandleRecord>) -> HandleStateView {
     let Some(record) = record else {
@@ -85,7 +73,7 @@ pub(crate) fn project_canonical(record: Option<&HandleRecord>) -> HandleStateVie
             materialization_receipt,
         } => {
             let derived_receipt = if matches!(record.lineage, HandleLineage::Derived { .. }) {
-                crate::resolve_enclave::decode_materialization_receipt(materialization_receipt)
+                decode_derived_materialization_receipt(materialization_receipt)
             } else {
                 None
             };

@@ -18,9 +18,9 @@
 use coprocessor_enclave_runtime::AttestationDigest;
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
-    HandleGraphCore, HandleId, HandleKey, HandleRecord, HandleState, HandleType, ImportedHandle,
-    InMemoryHandlePersistence, IngestionOutcome, MaterializationReceipt, OperationCode,
-    ResolutionReadiness, SystemCiphertextV1,
+    HandleGraphCore, HandleId, HandleKey, HandlePersistence, HandleRecord, HandleState, HandleType,
+    ImportedHandle, InMemoryHandlePersistence, IngestionOutcome, MaterializationReceipt,
+    OperationCode, ResolutionReadiness, SystemCiphertextV1,
 };
 use coprocessor_host::{
     CoprocessorHost, HandleStateFailureCategory, HandleStateView, HostConfig, LifecycleState,
@@ -331,47 +331,26 @@ fn restored_host_ready_derived_handle_exposes_structured_receipt_after_restart()
         ),
     );
 
-    // Encode a receipt in the derived format (same as resolve_enclave::encode)
-    let receipt = {
-        let mut bytes = Vec::new();
-        bytes.push(1u8); // Add = 1
-        for key in &[derived, a, b] {
-            bytes.extend_from_slice(&key.chain_id.0.to_be_bytes());
-            bytes.extend_from_slice(&key.contract_address.0);
-            bytes.extend_from_slice(&key.handle_id.0);
-        }
-        // Wait – correct format: output_handle_key then input_count then inputs then digest
-        bytes.clear();
-        bytes.push(1u8); // OperationCode::Add
-        // output_handle_key
-        bytes.extend_from_slice(&derived.chain_id.0.to_be_bytes());
-        bytes.extend_from_slice(&derived.contract_address.0);
-        bytes.extend_from_slice(&derived.handle_id.0);
-        // input_count = 2
-        bytes.extend_from_slice(&2u32.to_be_bytes());
-        // input a
-        bytes.extend_from_slice(&a.chain_id.0.to_be_bytes());
-        bytes.extend_from_slice(&a.contract_address.0);
-        bytes.extend_from_slice(&a.handle_id.0);
-        // input b
-        bytes.extend_from_slice(&b.chain_id.0.to_be_bytes());
-        bytes.extend_from_slice(&b.contract_address.0);
-        bytes.extend_from_slice(&b.handle_id.0);
-        // attestation_digest
-        bytes.extend_from_slice(&attestation_digest.0);
-        MaterializationReceipt(bytes)
-    };
+    let receipt = derived_receipt(OperationCode::Add, derived, &[a, b], attestation_digest);
     let ciphertext = SystemCiphertextV1(vec![0xCC; 16]);
 
     before_restart
-        .materialize_derived_handle_with_persistence(&derived, ciphertext.clone(), receipt, &mut store)
+        .materialize_derived_handle_with_persistence(
+            &derived,
+            ciphertext.clone(),
+            receipt,
+            &mut store,
+        )
         .expect("materialize must succeed");
 
     // Restore and verify the structured receipt survives rehydration
     let host = boot_restored_host(&store);
     let view = host.get_handle_state(&derived);
 
-    let HandleStateView::Ready { derived_receipt, .. } = view else {
+    let HandleStateView::Ready {
+        derived_receipt, ..
+    } = view
+    else {
         panic!("expected Ready after rehydration, got {view:?}");
     };
     let r = derived_receipt.expect("Derived Handle must have structured receipt after rehydration");
@@ -427,24 +406,7 @@ fn restored_host_ready_derived_handle_persistence_contains_no_raw_attestation_do
     );
 
     let attestation_digest = AttestationDigest([0x77; 32]);
-    let receipt = {
-        let mut bytes = Vec::new();
-        bytes.push(1u8); // Add
-        bytes.extend_from_slice(&derived.chain_id.0.to_be_bytes());
-        bytes.extend_from_slice(&derived.contract_address.0);
-        bytes.extend_from_slice(&derived.handle_id.0);
-        bytes.extend_from_slice(&2u32.to_be_bytes());
-        bytes.extend_from_slice(&a.chain_id.0.to_be_bytes());
-        bytes.extend_from_slice(&a.contract_address.0);
-        bytes.extend_from_slice(&a.handle_id.0);
-        bytes.extend_from_slice(&b.chain_id.0.to_be_bytes());
-        bytes.extend_from_slice(&b.contract_address.0);
-        bytes.extend_from_slice(&b.handle_id.0);
-        bytes.extend_from_slice(&attestation_digest.0);
-        MaterializationReceipt(bytes)
-    };
-    // The receipt bytes = 1 (op) + 60 (output key) + 4 (count) + 120 (2 keys) + 32 (digest)
-    // = 217 bytes — much smaller than any raw attestation document (>1 kB).
+    let receipt = derived_receipt(OperationCode::Add, derived, &[a, b], attestation_digest);
     let expected_receipt_len = 1 + 60 + 4 + 2 * 60 + 32;
     assert_eq!(
         receipt.0.len(),
@@ -461,14 +423,13 @@ fn restored_host_ready_derived_handle_persistence_contains_no_raw_attestation_do
         )
         .expect("materialize");
 
-    // Retrieve from store and confirm size stays at the minimal encoding
-    let restored = before_restart
-        .canonical_handle(&derived)
-        .expect("canonical");
+    let restored = store
+        .handle_record(&derived)
+        .expect("persistence must contain the Ready derived record");
     if let HandleState::Ready {
         materialization_receipt,
         ..
-    } = &restored.state
+    } = restored.state
     {
         assert_eq!(
             materialization_receipt.0.len(),
@@ -572,6 +533,47 @@ fn derived_event(
         input_handle_keys,
         event_ref,
     })
+}
+
+fn derived_receipt(
+    operation_code: OperationCode,
+    output_handle_key: HandleKey,
+    input_handle_keys: &[HandleKey],
+    attestation_digest: AttestationDigest,
+) -> MaterializationReceipt {
+    let mut bytes = Vec::new();
+    bytes.push(op_code_byte(operation_code));
+    encode_handle_key(&mut bytes, output_handle_key);
+    let input_count =
+        u32::try_from(input_handle_keys.len()).expect("fixture input count exceeds u32::MAX");
+    bytes.extend_from_slice(&input_count.to_be_bytes());
+    for input_handle_key in input_handle_keys {
+        encode_handle_key(&mut bytes, *input_handle_key);
+    }
+    bytes.extend_from_slice(&attestation_digest.0);
+    MaterializationReceipt(bytes)
+}
+
+fn encode_handle_key(bytes: &mut Vec<u8>, handle_key: HandleKey) {
+    bytes.extend_from_slice(&handle_key.chain_id.0.to_be_bytes());
+    bytes.extend_from_slice(&handle_key.contract_address.0);
+    bytes.extend_from_slice(&handle_key.handle_id.0);
+}
+
+fn op_code_byte(operation_code: OperationCode) -> u8 {
+    match operation_code {
+        OperationCode::Add => 1,
+        OperationCode::Sub => 2,
+        OperationCode::Eq => 3,
+        OperationCode::Lt => 4,
+        OperationCode::Lte => 5,
+        OperationCode::Gt => 6,
+        OperationCode::Gte => 7,
+        OperationCode::And => 8,
+        OperationCode::Or => 9,
+        OperationCode::Not => 10,
+        OperationCode::Select => 11,
+    }
 }
 
 fn handle_key(chain_id: u64, contract_seed: u8, handle_seed: u8) -> HandleKey {

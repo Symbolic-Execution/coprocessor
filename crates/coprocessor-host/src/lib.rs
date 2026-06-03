@@ -20,9 +20,11 @@ use coprocessor_handle_graph_core::{
 use coprocessor_mpc_client::{EnclaveCiphertextV1, MpcToEnclaveSource};
 use coprocessor_nitro_enclave::EnclaveAttestationSource;
 
+mod derived_receipt;
 mod internal_api;
 
-pub use internal_api::{DerivedHandleReceiptView, HandleStateFailureCategory, HandleStateView};
+pub use derived_receipt::DerivedHandleReceiptView;
+pub use internal_api::{HandleStateFailureCategory, HandleStateView};
 
 mod chain_ingestion;
 
