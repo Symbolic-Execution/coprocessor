@@ -90,14 +90,20 @@ pub enum FailureReason {
     /// Terminal failure during MPC To-Enclave Transformation. `reason` is
     /// non-secret: it names the failure category and input position only,
     /// never ciphertext bytes, wrapped keys, or plaintext.
-    MpcTransformationFailure { reason: String },
+    MpcTransformationFailure {
+        reason: String,
+    },
     /// Terminal failure during Enclave Execution. `reason` is non-secret:
     /// it names the failure category and affected input index only.
-    EnclaveExecutionFailure { reason: String },
+    EnclaveExecutionFailure {
+        reason: String,
+    },
     /// Terminal failure during core materialization. Indicates an
     /// orchestration bug (the Handle was not Pending or not Derived).
     /// `reason` is non-secret.
-    MaterializationFailure { reason: String },
+    MaterializationFailure {
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

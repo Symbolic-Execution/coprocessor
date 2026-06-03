@@ -64,13 +64,21 @@ fn retryable_mpc_unavailability_keeps_handle_pending_and_allows_reclaim() {
 
     // First attempt: retryable, budget = 2 remaining.
     let view = host.resolve_claimed_task(&task, &mpc_server, &attestation_source, &enclave);
-    assert_eq!(view, HandleStateView::Pending, "retryable failure must keep handle Pending");
+    assert_eq!(
+        view,
+        HandleStateView::Pending,
+        "retryable failure must keep handle Pending"
+    );
     assert_eq!(host.get_handle_state(&derived), HandleStateView::Pending);
 
     // Claim released, handle still Pending → re-claim allowed.
     assert!(!host.is_resolution_task_claimed(&derived));
     let reclaimed = host.claim_resolution_tasks();
-    assert_eq!(reclaimed.len(), 1, "re-claim must succeed after retryable failure");
+    assert_eq!(
+        reclaimed.len(),
+        1,
+        "re-claim must succeed after retryable failure"
+    );
     assert_eq!(reclaimed[0].output_handle_key, derived);
 
     let _ = a;
@@ -121,7 +129,11 @@ fn retryable_enclave_backend_unavailable_keeps_handle_pending_and_allows_reclaim
     let enclave = AlwaysUnavailableEnclave;
 
     let view = host.resolve_claimed_task(&task, &mpc_server, &attestation_source, &enclave);
-    assert_eq!(view, HandleStateView::Pending, "BackendUnavailable must keep handle Pending");
+    assert_eq!(
+        view,
+        HandleStateView::Pending,
+        "BackendUnavailable must keep handle Pending"
+    );
     assert_eq!(host.get_handle_state(&derived), HandleStateView::Pending);
 
     assert!(!host.is_resolution_task_claimed(&derived));
@@ -155,22 +167,22 @@ fn terminal_mpc_failure_transitions_handle_to_failed_mpc_transformation_failure(
         ),
         "terminal MPC failure must produce MpcTransformationFailure, got {view:?}"
     );
-    let HandleStateView::Failed { reason, .. } = &view else { unreachable!() };
+    let HandleStateView::Failed { reason, .. } = &view else {
+        unreachable!()
+    };
     assert!(
         !reason.contains("ciphertext") && !reason.contains("key") && !reason.contains("secret"),
         "reason must not contain secret material: {reason}"
     );
 
     // Handle transitioned to Failed — visible through GET.
-    assert!(
-        matches!(
-            host.get_handle_state(&derived),
-            HandleStateView::Failed {
-                category: HandleStateFailureCategory::MpcTransformationFailure,
-                ..
-            }
-        )
-    );
+    assert!(matches!(
+        host.get_handle_state(&derived),
+        HandleStateView::Failed {
+            category: HandleStateFailureCategory::MpcTransformationFailure,
+            ..
+        }
+    ));
     // Failed handle has no Resolution Readiness.
     assert_eq!(host.claim_resolution_tasks().len(), 0);
 }
@@ -204,7 +216,9 @@ fn terminal_enclave_failure_transitions_handle_to_failed_enclave_execution_failu
         ),
         "terminal enclave failure must produce EnclaveExecutionFailure, got {view:?}"
     );
-    let HandleStateView::Failed { reason, .. } = &view else { unreachable!() };
+    let HandleStateView::Failed { reason, .. } = &view else {
+        unreachable!()
+    };
     assert!(
         !reason.contains("ciphertext") && !reason.contains("key") && !reason.contains("secret"),
         "reason must not contain secret material: {reason}"
@@ -253,15 +267,15 @@ fn core_materialization_failure_transitions_handle_to_failed_materialization_fai
     );
 
     // The canonical handle reflects Failed state.
-    let canonical = core.canonical_handle(&derived).expect("canonical must exist");
-    assert!(
-        matches!(
-            canonical.state,
-            HandleState::Failed {
-                reason: FailureReason::MaterializationFailure { .. }
-            }
-        )
-    );
+    let canonical = core
+        .canonical_handle(&derived)
+        .expect("canonical must exist");
+    assert!(matches!(
+        canonical.state,
+        HandleState::Failed {
+            reason: FailureReason::MaterializationFailure { .. }
+        }
+    ));
 }
 
 // ---------- Retry budget exhaustion ----------
@@ -278,24 +292,24 @@ fn retryable_mpc_failure_exhausts_budget_and_transitions_to_failed() {
     // Attempt 1: retryable, budget now = 0 remaining.
     let tasks = host.claim_resolution_tasks();
     let task = tasks[0].clone();
-    let view1 = host.resolve_claimed_task(
-        &task,
-        &UnavailableMpcServer,
-        &attestation_source,
-        &enclave,
+    let view1 =
+        host.resolve_claimed_task(&task, &UnavailableMpcServer, &attestation_source, &enclave);
+    assert_eq!(
+        view1,
+        HandleStateView::Pending,
+        "first failure must stay Pending"
     );
-    assert_eq!(view1, HandleStateView::Pending, "first failure must stay Pending");
 
     // Attempt 2: budget = 0, this failure becomes terminal.
     let tasks2 = host.claim_resolution_tasks();
-    assert_eq!(tasks2.len(), 1, "re-claim must succeed after first retryable failure");
-    let task2 = tasks2[0].clone();
-    let view2 = host.resolve_claimed_task(
-        &task2,
-        &UnavailableMpcServer,
-        &attestation_source,
-        &enclave,
+    assert_eq!(
+        tasks2.len(),
+        1,
+        "re-claim must succeed after first retryable failure"
     );
+    let task2 = tasks2[0].clone();
+    let view2 =
+        host.resolve_claimed_task(&task2, &UnavailableMpcServer, &attestation_source, &enclave);
     assert!(
         matches!(
             view2,
@@ -331,7 +345,8 @@ fn retryable_enclave_failure_exhausts_budget_and_transitions_to_failed_enclave_c
         fake_enclave_ciphertext(a, 0xC0),
         fake_enclave_ciphertext(b, 0xC1),
     ]);
-    let view1 = host.resolve_claimed_task(&task, &mpc1, &attestation_source, &AlwaysUnavailableEnclave);
+    let view1 =
+        host.resolve_claimed_task(&task, &mpc1, &attestation_source, &AlwaysUnavailableEnclave);
     assert_eq!(view1, HandleStateView::Pending);
 
     // Attempt 2: budget = 0 → terminal EnclaveExecutionFailure.
@@ -341,7 +356,12 @@ fn retryable_enclave_failure_exhausts_budget_and_transitions_to_failed_enclave_c
         fake_enclave_ciphertext(a, 0xC0),
         fake_enclave_ciphertext(b, 0xC1),
     ]);
-    let view2 = host.resolve_claimed_task(&task2, &mpc2, &attestation_source, &AlwaysUnavailableEnclave);
+    let view2 = host.resolve_claimed_task(
+        &task2,
+        &mpc2,
+        &attestation_source,
+        &AlwaysUnavailableEnclave,
+    );
     assert!(
         matches!(
             view2,
@@ -474,8 +494,16 @@ fn failure_reason_strings_contain_no_secret_material() {
     };
 
     // Reason must not contain secret material.
-    let secret_keywords = ["ciphertext", "wrapped_key", "aad", "plaintext", "secret",
-                            "private_key", "attestation_doc", "decrypted"];
+    let secret_keywords = [
+        "ciphertext",
+        "wrapped_key",
+        "aad",
+        "plaintext",
+        "secret",
+        "private_key",
+        "attestation_doc",
+        "decrypted",
+    ];
     for keyword in secret_keywords {
         assert!(
             !reason.to_lowercase().contains(keyword),
@@ -509,7 +537,10 @@ fn fail_derived_handle_rejects_non_derived_source_handle() {
         },
     );
     assert!(
-        matches!(err, Err(coprocessor_handle_graph_core::FailDerivedError::NotDerived)),
+        matches!(
+            err,
+            Err(coprocessor_handle_graph_core::FailDerivedError::NotDerived)
+        ),
         "Source handles must not be failed via fail_derived_handle, got {err:?}"
     );
 }
@@ -540,7 +571,10 @@ fn fail_derived_handle_rejects_already_failed_handle() {
         },
     );
     assert!(
-        matches!(err, Err(coprocessor_handle_graph_core::FailDerivedError::NotPending)),
+        matches!(
+            err,
+            Err(coprocessor_handle_graph_core::FailDerivedError::NotPending)
+        ),
         "already-Failed handle must reject second fail_derived_handle, got {err:?}"
     );
 }
@@ -631,16 +665,16 @@ fn ingest_imported_into_host(
     block_number: u64,
     log_index: u32,
 ) {
-    let outcome = host.handle_graph_core_mut().apply_chain_event(ChainEvent::ImportedHandle(
-        ImportedHandle {
+    let outcome = host
+        .handle_graph_core_mut()
+        .apply_chain_event(ChainEvent::ImportedHandle(ImportedHandle {
             domain_id: DomainId([DEFAULT_DOMAIN; 32]),
             handle_key,
             handle_type: HandleType::Suint256,
             system_ciphertext: well_formed_system_ciphertext(handle_key, "suint256"),
             materialization_receipt: MaterializationReceipt(vec![0x02]),
             event_ref: event_ref(block_number, log_index),
-        },
-    ));
+        }));
     assert!(matches!(outcome, IngestionOutcome::Recorded(_)));
 }
 
@@ -651,16 +685,16 @@ fn seed_add_derived(host: &mut CoprocessorHost) -> (HandleKey, HandleKey, Handle
     let derived = handle_key(10);
     ingest_imported_into_host(host, a, 1, 1);
     ingest_imported_into_host(host, b, 1, 2);
-    let outcome = host
-        .handle_graph_core_mut()
-        .apply_chain_event(ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
-            domain_id: DomainId([DEFAULT_DOMAIN; 32]),
-            handle_key: derived,
-            operation_code: OperationCode::Add,
-            output_handle_type: HandleType::Suint256,
-            input_handle_keys: vec![a, b],
-            event_ref: event_ref(2, 1),
-        }));
+    let outcome =
+        host.handle_graph_core_mut()
+            .apply_chain_event(ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
+                domain_id: DomainId([DEFAULT_DOMAIN; 32]),
+                handle_key: derived,
+                operation_code: OperationCode::Add,
+                output_handle_type: HandleType::Suint256,
+                input_handle_keys: vec![a, b],
+                event_ref: event_ref(2, 1),
+            }));
     assert!(matches!(outcome, IngestionOutcome::Recorded(_)));
     (a, b, derived)
 }
@@ -695,9 +729,18 @@ fn ingest_pair_and_derived_into_core(
         input_handle_keys: vec![a, b],
         event_ref: event_ref(2, 1),
     });
-    assert!(matches!(core.apply_chain_event(import_a), IngestionOutcome::Recorded(_)));
-    assert!(matches!(core.apply_chain_event(import_b), IngestionOutcome::Recorded(_)));
-    assert!(matches!(core.apply_chain_event(derive), IngestionOutcome::Recorded(_)));
+    assert!(matches!(
+        core.apply_chain_event(import_a),
+        IngestionOutcome::Recorded(_)
+    ));
+    assert!(matches!(
+        core.apply_chain_event(import_b),
+        IngestionOutcome::Recorded(_)
+    ));
+    assert!(matches!(
+        core.apply_chain_event(derive),
+        IngestionOutcome::Recorded(_)
+    ));
 }
 
 fn ingest_pair_and_derived_into_core_with_persistence(
@@ -808,4 +851,3 @@ impl EnclaveRuntime for AlwaysUnavailableEnclave {
         Err(EnclaveExecutionError::BackendUnavailable)
     }
 }
-
