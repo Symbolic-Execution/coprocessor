@@ -242,7 +242,7 @@ pub fn encode_chain_event_ref(value: &ChainEventRef) -> String {
 }
 
 pub fn decode_chain_event_ref(text: &str) -> Result<ChainEventRef, JsonParseError> {
-    reject_json_string_escape(text)?;
+    reject_json_string_escape_in_top_level_object(text)?;
     let mut de = serde_json::Deserializer::from_str(text);
     let value: ChainEventRefDto =
         serde::de::Deserialize::deserialize(&mut de).map_err(map_serde_json_to_parse_error)?;
@@ -250,15 +250,93 @@ pub fn decode_chain_event_ref(text: &str) -> Result<ChainEventRef, JsonParseErro
     Ok(value.into())
 }
 
-fn reject_json_string_escape(text: &str) -> Result<(), JsonParseError> {
-    let mut in_string = false;
-    for byte in text.bytes() {
-        match (in_string, byte) {
-            (false, b'"') => in_string = true,
-            (true, b'"') => in_string = false,
-            (true, b'\\') => return Err(JsonParseError::UnsupportedStringEscape),
+fn reject_json_string_escape_in_top_level_object(text: &str) -> Result<(), JsonParseError> {
+    let Some(start) = first_non_whitespace(text) else {
+        return Ok(());
+    };
+    if text.as_bytes()[start] != b'{' {
+        return Ok(());
+    }
+
+    reject_json_string_escape_until_top_level_close(text, start)
+}
+
+fn reject_json_string_escape_in_top_level_string(text: &str) -> Result<(), JsonParseError> {
+    let Some(start) = first_non_whitespace(text) else {
+        return Ok(());
+    };
+    if text.as_bytes()[start] != b'"' {
+        return Ok(());
+    }
+
+    let mut escaped = false;
+    for byte in text.bytes().skip(start + 1) {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match byte {
+            b'\\' => return Err(JsonParseError::UnsupportedStringEscape),
+            b'"' => return Ok(()),
             _ => {}
         }
+    }
+    Ok(())
+}
+
+fn first_non_whitespace(text: &str) -> Option<usize> {
+    text.bytes()
+        .position(|byte| !matches!(byte, b' ' | b'\t' | b'\n' | b'\r'))
+}
+
+fn reject_json_string_escape_until_top_level_close(
+    text: &str,
+    start: usize,
+) -> Result<(), JsonParseError> {
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut reject_current_string = false;
+    let mut escaped = false;
+    let mut index = start;
+
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else {
+                match byte {
+                    b'\\' if reject_current_string => {
+                        return Err(JsonParseError::UnsupportedStringEscape);
+                    }
+                    b'\\' => escaped = true,
+                    b'"' => {
+                        in_string = false;
+                        reject_current_string = false;
+                    }
+                    _ => {}
+                }
+            }
+            index += 1;
+            continue;
+        }
+
+        match byte {
+            b'"' => {
+                in_string = true;
+                reject_current_string = depth == 1;
+            }
+            b'{' | b'[' => depth += 1,
+            b'}' | b']' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Ok(());
+                }
+            }
+            _ => {}
+        }
+        index += 1;
     }
     Ok(())
 }
@@ -389,11 +467,7 @@ fn unmarker_expected(expected: &str) -> &'static str {
 }
 
 fn marker_to_parse_error(message: &str) -> Option<JsonParseError> {
-    let start = message.find(SERDE_ERROR_PREFIX)?;
-    let marker = message[start + SERDE_ERROR_PREFIX.len()..]
-        .split_whitespace()
-        .next()
-        .unwrap_or_default();
+    let marker = serde_error_marker(message)?;
     let parts: Vec<&str> = marker.split(':').collect();
     match parts.as_slice() {
         ["field_shape", field, expected] => Some(JsonParseError::FieldShape {
@@ -454,6 +528,21 @@ fn marker_to_parse_error(message: &str) -> Option<JsonParseError> {
         }
         _ => None,
     }
+}
+
+fn serde_error_marker(message: &str) -> Option<&str> {
+    if let Some(marker) = message.strip_prefix(SERDE_ERROR_PREFIX) {
+        return Some(marker.split_whitespace().next().unwrap_or_default());
+    }
+
+    if !message.starts_with("invalid type:") {
+        return None;
+    }
+
+    let expected_marker = format!("expected {SERDE_ERROR_PREFIX}");
+    let start = message.find(&expected_marker)?;
+    let marker = &message[start + expected_marker.len()..];
+    Some(marker.split_whitespace().next().unwrap_or_default())
 }
 
 fn missing_field_from_serde_error(message: &str) -> Option<&'static str> {
@@ -565,7 +654,7 @@ fn decode_envelope_bytes(text: &str) -> Result<Vec<u8>, CiphertextJsonError> {
     // rather than being swallowed by a combined parse-and-end call.
     // The serde_json error message is discarded — it can contain the offending
     // token, which for base64/ciphertext fields would leak payload bytes.
-    reject_json_string_escape(text)?;
+    reject_json_string_escape_in_top_level_string(text)?;
     let mut de = serde_json::Deserializer::from_str(text);
     let base64_text: String = serde::de::Deserialize::deserialize(&mut de).map_err(|_| {
         CiphertextJsonError::Json(JsonParseError::UnexpectedToken { expected: "string" })

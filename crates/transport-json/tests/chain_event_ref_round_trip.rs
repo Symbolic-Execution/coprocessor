@@ -88,6 +88,15 @@ fn top_level_array_is_rejected_with_unexpected_token() {
 }
 
 #[test]
+fn top_level_string_with_escape_is_rejected_as_wrong_shape() {
+    let err = decode_chain_event_ref("\"not\\u002dan\\u002dobject\"").unwrap_err();
+    assert!(matches!(
+        err,
+        JsonParseError::UnexpectedToken { expected: "object" }
+    ));
+}
+
+#[test]
 fn missing_field_is_rejected_with_specific_field_name() {
     let baseline = sample_chain_event_ref();
     let json = format!(
@@ -126,6 +135,26 @@ fn wrong_field_shape_is_rejected_with_expected_kind() {
         JsonParseError::FieldShape {
             field: "chain_id",
             expected: "unsigned integer",
+        }
+    ));
+}
+
+#[test]
+fn bytes32_field_with_wrong_shape_keeps_field_specific_error() {
+    let baseline = sample_chain_event_ref();
+    let json = format!(
+        "{{\"chain_id\":{},\"block_number\":{},\"block_hash\":1,\"tx_hash\":\"{}\",\"log_index\":{}}}",
+        baseline.chain_id.0,
+        baseline.block_number,
+        hex(&baseline.tx_hash),
+        baseline.log_index,
+    );
+    let err = decode_chain_event_ref(&json).unwrap_err();
+    assert!(matches!(
+        err,
+        JsonParseError::FieldShape {
+            field: "block_hash",
+            expected: "string",
         }
     ));
 }
@@ -217,6 +246,17 @@ fn leading_zero_number_is_rejected() {
 fn trailing_content_after_object_is_rejected() {
     let baseline = sample_chain_event_ref();
     let json = format!("{}, garbage", encode_chain_event_ref(&baseline));
+    let err = decode_chain_event_ref(&json).unwrap_err();
+    assert!(matches!(err, JsonParseError::TrailingContent));
+}
+
+#[test]
+fn trailing_escaped_string_after_object_is_rejected_as_trailing_content() {
+    let baseline = sample_chain_event_ref();
+    let json = format!(
+        "{} \"trailing\\u002dcontent\"",
+        encode_chain_event_ref(&baseline)
+    );
     let err = decode_chain_event_ref(&json).unwrap_err();
     assert!(matches!(err, JsonParseError::TrailingContent));
 }

@@ -30,6 +30,20 @@ fn chain_event_ref_field_content_not_exposed_in_error_output() {
 }
 
 #[test]
+fn unknown_field_cannot_spoof_internal_serde_error_marker() {
+    let json = concat!(
+        "{\"chain_id\":1,",
+        "\"block_number\":1,",
+        "\"block_hash\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",",
+        "\"tx_hash\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",",
+        "\"log_index\":1,",
+        "\"__transport_json_error__:hex:wrong_byte_length:block_hash:32:31 \":1}"
+    );
+    let err = decode_chain_event_ref(json).unwrap_err();
+    assert!(matches!(err, JsonParseError::UnexpectedField));
+}
+
+#[test]
 fn ciphertext_envelope_content_not_exposed_in_error_output() {
     // Feed a JSON object (not a string) as the ciphertext envelope. The
     // serde_json error message would normally contain the offending token;
@@ -105,6 +119,15 @@ fn base64_string_with_json_escape_is_rejected() {
     assert!(matches!(
         err,
         CiphertextJsonError::Json(JsonParseError::UnsupportedStringEscape)
+    ));
+}
+
+#[test]
+fn escaped_string_after_ciphertext_envelope_is_rejected_as_trailing_content() {
+    let err = decode_system_ciphertext("\"AAAA\" \"trailing\\u002dcontent\"").unwrap_err();
+    assert!(matches!(
+        err,
+        CiphertextJsonError::Json(JsonParseError::TrailingContent)
     ));
 }
 
