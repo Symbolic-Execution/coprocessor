@@ -18,7 +18,7 @@ use coprocessor_handle_graph_core::{
     HandleGraphCore, HandleKey, HandlePersistence, PlaintextMaterializer,
 };
 use coprocessor_mpc_client::{EnclaveCiphertextV1, MpcToEnclaveSource};
-use coprocessor_nitro_enclave::{EnclaveAttestationMaterial, EnclaveAttestationSource};
+use coprocessor_nitro_enclave::EnclaveAttestationSource;
 
 mod internal_api;
 
@@ -412,12 +412,11 @@ impl CoprocessorHost {
     /// Execute one claimed Resolution Task through the Enclave boundary and
     /// materialize the result into the Handle Graph.
     ///
-    /// Takes the scheduler `task` and the `input_ciphertexts` produced by
-    /// [`Self::transform_resolution_task_inputs`], builds the enclave-runtime
-    /// [`ResolutionTask`], calls `enclave.execute`, bridges the
-    /// [`EnclaveExecutionOutcome`] into core domain types (encoding
-    /// `SystemCiphertextV1` via `.encode()` and the Materialization Receipt
-    /// via a minimal deterministic byte encoding), and transitions the Pending
+    /// Takes the scheduler `task`, transforms its ordered inputs through MPC,
+    /// builds the enclave-runtime [`ResolutionTask`], calls `enclave.execute`,
+    /// bridges the [`EnclaveExecutionOutcome`] into core domain types (encoding
+    /// `SystemCiphertextV1` via `.encode()` and the Materialization Receipt via
+    /// a minimal deterministic byte encoding), and transitions the Pending
     /// Derived Handle to Ready. On success the scheduler claim is released.
     ///
     /// On [`ResolveClaimedTaskError::EnclaveExecutionFailed`] the Derived
@@ -426,14 +425,14 @@ impl CoprocessorHost {
     pub fn resolve_claimed_task(
         &mut self,
         task: &ResolutionTask,
-        input_ciphertexts: Vec<EnclaveCiphertextV1>,
-        attestation: &EnclaveAttestationMaterial,
+        mpc_source: &dyn MpcToEnclaveSource,
+        attestation_source: &dyn EnclaveAttestationSource,
         enclave: &dyn EnclaveRuntime,
     ) -> Result<HandleStateView, ResolveClaimedTaskError> {
         resolve_enclave::resolve_claimed_task(
             task,
-            input_ciphertexts,
-            attestation,
+            mpc_source,
+            attestation_source,
             enclave,
             &mut self.handle_graph_core,
             &mut self.resolution_claims,

@@ -1,7 +1,7 @@
 //! Orchestrate the execute -> materialize path for one claimed Resolution Task.
 //!
-//! After MPC transforms the ordered `SystemCiphertextV1` inputs to
-//! `EnclaveCiphertextV1`, this module builds the enclave-runtime
+//! This module transforms the ordered `SystemCiphertextV1` inputs to
+//! `EnclaveCiphertextV1` through MPC, builds the enclave-runtime
 //! [`ResolutionTask`], calls the [`EnclaveRuntime`] boundary, and bridges the
 //! [`EnclaveExecutionOutcome`] back into core domain types so the Handle Graph
 //! can transition the Pending Derived Handle to Ready.
@@ -19,18 +19,23 @@
 
 use coprocessor_ciphertext_binding::{EnclaveCiphertextV1, RequestId};
 use coprocessor_enclave_runtime::{
-    EnclaveExecutionError, EnclaveRuntime,
-    ResolutionTask as EnclaveResolutionTask,
+    EnclaveExecutionError, EnclaveRuntime, ResolutionTask as EnclaveResolutionTask,
 };
 use coprocessor_handle_graph_core::{
-    HandleGraphCore, HandleKey, MaterializationReceipt, MaterializeDerivedError,
-    OperationCode, SystemCiphertextV1,
+    HandleGraphCore, HandleKey, MaterializationReceipt, MaterializeDerivedError, OperationCode,
+    SystemCiphertextV1,
 };
-use coprocessor_nitro_enclave::EnclaveAttestationMaterial;
+use coprocessor_mpc_client::MpcToEnclaveSource;
+use coprocessor_nitro_enclave::{
+    EnclaveAttestationError, EnclaveAttestationMaterial, EnclaveAttestationSource,
+};
 
 use crate::internal_api::{project_canonical, HandleStateView};
 use crate::resolution_scheduler::ResolutionTask;
 use crate::resolution_scheduler::ResolutionTaskClaims;
+use crate::to_enclave_transformation::{
+    transform_resolution_task_inputs, TransformResolutionInputsError,
+};
 
 /// Reasons [`crate::CoprocessorHost::resolve_claimed_task`] can fail.
 ///
@@ -43,6 +48,8 @@ use crate::resolution_scheduler::ResolutionTaskClaims;
 /// material, mirroring the sanitized error surfaces elsewhere in this crate.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResolveClaimedTaskError {
+    /// MPC To-Enclave Transformation failed. The Derived Handle remains Pending.
+    TransformFailed(TransformResolutionInputsError),
     /// Enclave Execution failed. The Derived Handle remains Pending.
     EnclaveExecutionFailed(EnclaveExecutionError),
     /// The core rejected materialization. This indicates an orchestration bug.
@@ -52,30 +59,60 @@ pub enum ResolveClaimedTaskError {
 /// Execute one claimed Resolution Task through the Enclave boundary and bind
 /// the result into the Handle Graph Core.
 ///
-/// 1. Builds the enclave-runtime [`EnclaveResolutionTask`] from the scheduler
-///    `task` (preserving `input_ciphertexts` ordering exactly).
-/// 2. Calls `enclave.execute`.
-/// 3. Bridges the outcome: encodes the ciphertext-binding `SystemCiphertextV1`
+/// 1. Fetches one Enclave attestation target and transforms the task's ordered
+///    input `SystemCiphertextV1` values through MPC.
+/// 2. Builds the enclave-runtime [`EnclaveResolutionTask`] from the scheduler
+///    `task` and transformed inputs, preserving input order exactly.
+/// 3. Calls `enclave.execute`.
+/// 4. Bridges the outcome: encodes the ciphertext-binding `SystemCiphertextV1`
 ///    via `.encode()` into the core's opaque `SystemCiphertextV1(Vec<u8>)`;
 ///    encodes the `EnclaveMaterializationReceipt` into a minimal deterministic
 ///    `MaterializationReceipt(Vec<u8>)`.
-/// 4. Calls `core.materialize_derived_handle` to transition Pending -> Ready.
-/// 5. Releases the claim via `claims.release`.
+/// 5. Calls `core.materialize_derived_handle` to transition Pending -> Ready.
+/// 6. Releases the claim via `claims.release`.
 ///
-/// On `EnclaveExecutionFailed` the Handle State is left Pending (no mutation).
+/// On transform or Enclave Execution failure the Handle State is left Pending.
+/// The claim is released on every returned error so the task can be claimed
+/// again while issue #41 defines retry classification and backoff.
 pub(crate) fn resolve_claimed_task(
     task: &ResolutionTask,
-    input_ciphertexts: Vec<EnclaveCiphertextV1>,
-    attestation: &EnclaveAttestationMaterial,
+    mpc_source: &dyn MpcToEnclaveSource,
+    attestation_source: &dyn EnclaveAttestationSource,
     enclave: &dyn EnclaveRuntime,
     core: &mut HandleGraphCore,
     claims: &mut ResolutionTaskClaims,
 ) -> Result<HandleStateView, ResolveClaimedTaskError> {
-    let enclave_task = build_enclave_task(task, input_ciphertexts, attestation);
+    let attestation = match attestation_source.current_attestation_material() {
+        Ok(attestation) => attestation,
+        Err(error) => {
+            claims.release(&task.output_handle_key);
+            return Err(ResolveClaimedTaskError::TransformFailed(
+                TransformResolutionInputsError::EnclaveAttestationUnavailable { error },
+            ));
+        }
+    };
 
-    let outcome = enclave
-        .execute(&enclave_task)
-        .map_err(ResolveClaimedTaskError::EnclaveExecutionFailed)?;
+    let pinned_attestation = PinnedAttestationSource {
+        material: attestation.clone(),
+    };
+    let input_ciphertexts =
+        match transform_resolution_task_inputs(task, mpc_source, &pinned_attestation) {
+            Ok(input_ciphertexts) => input_ciphertexts,
+            Err(error) => {
+                claims.release(&task.output_handle_key);
+                return Err(ResolveClaimedTaskError::TransformFailed(error));
+            }
+        };
+
+    let enclave_task = build_enclave_task(task, input_ciphertexts, &attestation);
+
+    let outcome = match enclave.execute(&enclave_task) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            claims.release(&task.output_handle_key);
+            return Err(ResolveClaimedTaskError::EnclaveExecutionFailed(error));
+        }
+    };
 
     // Bridge: ciphertext-binding SystemCiphertextV1 -> core opaque bytes
     let core_ciphertext = SystemCiphertextV1(outcome.system_ciphertext.encode());
@@ -83,12 +120,30 @@ pub(crate) fn resolve_claimed_task(
     // Bridge: EnclaveMaterializationReceipt -> minimal opaque bytes
     let core_receipt = encode_materialization_receipt(&outcome.receipt);
 
-    core.materialize_derived_handle(&task.output_handle_key, core_ciphertext, core_receipt)
-        .map_err(ResolveClaimedTaskError::MaterializationFailed)?;
+    if let Err(error) =
+        core.materialize_derived_handle(&task.output_handle_key, core_ciphertext, core_receipt)
+    {
+        claims.release(&task.output_handle_key);
+        return Err(ResolveClaimedTaskError::MaterializationFailed(error));
+    }
 
     claims.release(&task.output_handle_key);
 
-    Ok(project_canonical(core.canonical_handle(&task.output_handle_key)))
+    Ok(project_canonical(
+        core.canonical_handle(&task.output_handle_key),
+    ))
+}
+
+struct PinnedAttestationSource {
+    material: EnclaveAttestationMaterial,
+}
+
+impl EnclaveAttestationSource for PinnedAttestationSource {
+    fn current_attestation_material(
+        &self,
+    ) -> Result<EnclaveAttestationMaterial, EnclaveAttestationError> {
+        Ok(self.material.clone())
+    }
 }
 
 /// Build an enclave-runtime [`EnclaveResolutionTask`] from the host scheduler's

@@ -87,7 +87,13 @@ fn materialize_tombstoned_handle_returns_error() {
     let mut core = HandleGraphCore::new();
     let a = handle_key(1);
     let ref1 = event_ref(1, 1);
-    ingest_imported(&mut core, a, HandleType::Suint256, ref1, SystemCiphertextV1(vec![0xA1]));
+    ingest_imported(
+        &mut core,
+        a,
+        HandleType::Suint256,
+        ref1,
+        SystemCiphertextV1(vec![0xA1]),
+    );
     core.apply_orphan_discard(&[ref1]);
 
     let err = core
@@ -102,7 +108,7 @@ fn materialize_tombstoned_handle_returns_error() {
 }
 
 #[test]
-fn materialize_non_canonical_handle_returns_error_without_mutation() {
+fn materialize_non_canonical_handle_returns_unknown_without_mutation() {
     let mut core = HandleGraphCore::new();
     let mut store = InMemoryHandlePersistence::new();
     let (a, b) = seed_suint_pair(&mut core);
@@ -135,7 +141,7 @@ fn materialize_non_canonical_handle_returns_error_without_mutation() {
         )
         .expect_err("non-canonical handle must return MaterializeDerivedError");
 
-    assert_eq!(err, MaterializeDerivedError::NotCanonical);
+    assert_eq!(err, MaterializeDerivedError::UnknownHandle);
     let audit = restored
         .handle_record_for_audit(&derived)
         .expect("non-canonical record remains audit-visible");
@@ -220,11 +226,21 @@ fn materialize_with_persistence_writes_ready_record_rehydrated_after_restore() {
     let derived = handle_key(10);
 
     let _ = core.apply_chain_event_with_persistence(
-        imported_event(a, HandleType::Suint256, event_ref(1, 1), SystemCiphertextV1(vec![0xA1])),
+        imported_event(
+            a,
+            HandleType::Suint256,
+            event_ref(1, 1),
+            SystemCiphertextV1(vec![0xA1]),
+        ),
         &mut store,
     );
     let _ = core.apply_chain_event_with_persistence(
-        imported_event(b, HandleType::Suint256, event_ref(1, 2), SystemCiphertextV1(vec![0xB2])),
+        imported_event(
+            b,
+            HandleType::Suint256,
+            event_ref(1, 2),
+            SystemCiphertextV1(vec![0xB2]),
+        ),
         &mut store,
     );
     let _ = core.apply_chain_event_with_persistence(
@@ -316,16 +332,15 @@ fn ingest_derived(
     block_number: u64,
     log_index: u32,
 ) {
-    let outcome = core.apply_chain_event(ChainEvent::DerivedHandleOperation(
-        DerivedHandleOperation {
+    let outcome =
+        core.apply_chain_event(ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
             domain_id: DomainId([DEFAULT_DOMAIN; 32]),
             handle_key,
             operation_code,
             output_handle_type,
             input_handle_keys,
             event_ref: event_ref(block_number, log_index),
-        },
-    ));
+        }));
     assert!(
         matches!(outcome, IngestionOutcome::Recorded(_)),
         "derived handle must be recorded"

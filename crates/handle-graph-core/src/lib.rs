@@ -203,8 +203,6 @@ pub struct OrphanDiscardOutcome {
 pub enum MaterializeDerivedError {
     /// No Handle Record exists for the given Handle Key.
     UnknownHandle,
-    /// The Handle Record exists but is not canonical.
-    NotCanonical,
     /// The Handle Record exists but has been tombstoned by Orphan Discard.
     Tombstoned,
     /// The Handle Record's lineage is Source, not Derived. Only Derived
@@ -479,9 +477,9 @@ impl HandleGraphCore {
     /// enforced here and nowhere else.
     ///
     /// Returns the updated [`HandleRecord`] on success. Returns a typed
-    /// [`MaterializeDerivedError`] when the handle key is unknown,
-    /// non-canonical, tombstoned, not Derived-lineage, or not in the Pending
-    /// state. On error the record is left unchanged.
+    /// [`MaterializeDerivedError`] when the handle key has no canonical record,
+    /// is tombstoned, is not Derived-lineage, or is not in the Pending state.
+    /// On error the record is left unchanged.
     pub fn materialize_derived_handle(
         &mut self,
         handle_key: &HandleKey,
@@ -493,12 +491,12 @@ impl HandleGraphCore {
             .get_mut(handle_key)
             .ok_or(MaterializeDerivedError::UnknownHandle)?;
 
-        if !record.is_canonical {
-            return Err(MaterializeDerivedError::NotCanonical);
-        }
-
         if record.is_tombstoned {
             return Err(MaterializeDerivedError::Tombstoned);
+        }
+
+        if !record.is_canonical {
+            return Err(MaterializeDerivedError::UnknownHandle);
         }
 
         if !matches!(record.lineage, HandleLineage::Derived { .. }) {
@@ -527,8 +525,11 @@ impl HandleGraphCore {
         materialization_receipt: MaterializationReceipt,
         persistence: &mut P,
     ) -> Result<HandleRecord, MaterializeDerivedError> {
-        let record =
-            self.materialize_derived_handle(handle_key, system_ciphertext, materialization_receipt)?;
+        let record = self.materialize_derived_handle(
+            handle_key,
+            system_ciphertext,
+            materialization_receipt,
+        )?;
         persistence.put_handle_record(record.clone());
         Ok(record)
     }

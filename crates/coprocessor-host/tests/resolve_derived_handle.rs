@@ -1,9 +1,9 @@
 //! End-to-end Resolution tests for issue #40.
 //!
-//! After the scheduler claims a Resolution Task and MPC transforms inputs to
-//! EnclaveCiphertextV1, the host must invoke Enclave Execution through the
-//! EnclaveRuntime boundary, receive EnclaveExecutionOutcome, and bind it to the
-//! output Handle Record so the handle transitions Pending -> Ready.
+//! After the scheduler claims a Resolution Task, the host must transform inputs
+//! to EnclaveCiphertextV1, invoke Enclave Execution through the EnclaveRuntime
+//! boundary, receive EnclaveExecutionOutcome, and bind it to the output Handle
+//! Record so the handle transitions Pending -> Ready.
 //!
 //! Acceptance criteria:
 //! - Pending Derived Handle with ready inputs resolves to Ready through the
@@ -24,7 +24,7 @@ use coprocessor_ciphertext_binding::{
     SystemCiphertextV1 as EnvelopeSystemCiphertextV1, SystemHandleAadV1,
 };
 use coprocessor_enclave_runtime::{
-    AttestationDigest, EnclaveRuntime, EnclaveExecutionError, EnclaveExecutionOutcome,
+    AttestationDigest, EnclaveExecutionError, EnclaveExecutionOutcome, EnclaveRuntime,
     FakeEnclaveRuntime, ResolutionTask as EnclaveResolutionTask,
 };
 use coprocessor_handle_graph_core::{
@@ -32,13 +32,17 @@ use coprocessor_handle_graph_core::{
     HandleId, HandleKey, HandleType, ImportedHandle, IngestionOutcome, MaterializationReceipt,
     OperationCode, SystemCiphertextV1,
 };
-use coprocessor_host::{CoprocessorHost, HandleStateView, HostConfig};
+use coprocessor_host::{
+    CoprocessorHost, HandleStateView, HostConfig, ResolveClaimedTaskError,
+    TransformResolutionInputsError,
+};
 use coprocessor_mpc_client::{
-    MpcSourceError, MpcToEnclaveResponse, MpcToEnclaveSource, ToEnclaveTransformationRequest,
+    MpcSourceError, MpcToEnclaveResponse, MpcToEnclaveSource, ToEnclaveTransformationError,
+    ToEnclaveTransformationRequest,
 };
 use coprocessor_nitro_enclave::{
-    EnclaveAttestationMaterial, EnclaveAttestationSource,
-    LocalEnclaveAttestationConfig, LocalEnclaveAttestationSource,
+    EnclaveAttestationMaterial, EnclaveAttestationSource, LocalEnclaveAttestationConfig,
+    LocalEnclaveAttestationSource,
 };
 
 const DEFAULT_CHAIN: u64 = 1;
@@ -55,8 +59,22 @@ fn full_path_pending_derived_handle_resolves_to_ready() {
     let b = handle_key(2);
     let a_ciphertext = well_formed_system_ciphertext(a, "suint256");
     let b_ciphertext = well_formed_system_ciphertext(b, "suint256");
-    ingest_imported(&mut host, a, HandleType::Suint256, a_ciphertext.clone(), 1, 1);
-    ingest_imported(&mut host, b, HandleType::Suint256, b_ciphertext.clone(), 1, 2);
+    ingest_imported(
+        &mut host,
+        a,
+        HandleType::Suint256,
+        a_ciphertext.clone(),
+        1,
+        1,
+    );
+    ingest_imported(
+        &mut host,
+        b,
+        HandleType::Suint256,
+        b_ciphertext.clone(),
+        1,
+        2,
+    );
     let derived = handle_key(10);
     ingest_derived(
         &mut host,
@@ -74,25 +92,16 @@ fn full_path_pending_derived_handle_resolves_to_ready() {
     let task = &tasks[0];
     assert_eq!(task.output_handle_key, derived);
 
-    // Transform inputs via MPC fake
     let attestation_source = local_attestation_source();
     let enclave_a = fake_enclave_ciphertext(a, 0xC0);
     let enclave_b = fake_enclave_ciphertext(b, 0xC1);
     let mpc_server = ProgrammableMpcServer::with_successes(vec![enclave_a, enclave_b]);
 
-    let input_ciphertexts = host
-        .transform_resolution_task_inputs(task, &mpc_server, &attestation_source)
-        .expect("transform must succeed");
-    assert_eq!(input_ciphertexts.len(), 2);
-
     // Execute via FakeEnclaveRuntime
     let fake_enclave = FakeEnclaveRuntime::deterministic();
-    let attestation = attestation_source
-        .current_attestation_material()
-        .expect("attestation must be available");
 
     let view = host
-        .resolve_claimed_task(task, input_ciphertexts, &attestation, &fake_enclave)
+        .resolve_claimed_task(task, &mpc_server, &attestation_source, &fake_enclave)
         .expect("resolve must succeed");
 
     // Assert Ready state
@@ -132,8 +141,22 @@ fn select_input_order_preserved_into_enclave_resolution_task() {
     let when_false_ct = well_formed_system_ciphertext(when_false, "suint256");
 
     ingest_imported(&mut host, predicate, HandleType::Sbool, predicate_ct, 1, 20);
-    ingest_imported(&mut host, when_true, HandleType::Suint256, when_true_ct, 1, 21);
-    ingest_imported(&mut host, when_false, HandleType::Suint256, when_false_ct, 1, 22);
+    ingest_imported(
+        &mut host,
+        when_true,
+        HandleType::Suint256,
+        when_true_ct,
+        1,
+        21,
+    );
+    ingest_imported(
+        &mut host,
+        when_false,
+        HandleType::Suint256,
+        when_false_ct,
+        1,
+        22,
+    );
     let select_derived = handle_key(23);
     ingest_derived(
         &mut host,
@@ -159,21 +182,16 @@ fn select_input_order_preserved_into_enclave_resolution_task() {
         enc_when_false.clone(),
     ]);
 
-    let input_ciphertexts = host
-        .transform_resolution_task_inputs(task, &mpc_server, &attestation_source)
-        .expect("transform must succeed");
-
     // Capture the enclave task via a recording enclave
     let recorder = RecordingEnclaveRuntime::new(FakeEnclaveRuntime::deterministic());
-    let attestation = attestation_source
-        .current_attestation_material()
-        .expect("attestation");
 
     let _ = host
-        .resolve_claimed_task(task, input_ciphertexts, &attestation, &recorder)
+        .resolve_claimed_task(task, &mpc_server, &attestation_source, &recorder)
         .expect("resolve must succeed");
 
-    let captured = recorder.captured_task().expect("enclave must have been called");
+    let captured = recorder
+        .captured_task()
+        .expect("enclave must have been called");
     assert_eq!(
         captured.input_handle_keys,
         vec![predicate, when_true, when_false],
@@ -225,16 +243,10 @@ fn ready_view_contains_no_plaintext_and_ciphertext_round_trips_encode() {
         fake_enclave_ciphertext(a, 0xC0),
         fake_enclave_ciphertext(b, 0xC1),
     ]);
-    let input_ciphertexts = host
-        .transform_resolution_task_inputs(task, &mpc_server, &attestation_source)
-        .expect("transform");
 
     let recorder = RecordingEnclaveRuntime::new(FakeEnclaveRuntime::deterministic());
-    let attestation = attestation_source
-        .current_attestation_material()
-        .expect("attestation");
     let view = host
-        .resolve_claimed_task(task, input_ciphertexts, &attestation, &recorder)
+        .resolve_claimed_task(task, &mpc_server, &attestation_source, &recorder)
         .expect("resolve");
 
     let HandleStateView::Ready {
@@ -309,9 +321,6 @@ fn with_expected_attestation_succeeds_when_digest_matches_measurement() {
         fake_enclave_ciphertext(a, 0xC0),
         fake_enclave_ciphertext(b, 0xC1),
     ]);
-    let input_ciphertexts = host
-        .transform_resolution_task_inputs(task, &mpc_server, &attestation_source)
-        .expect("transform");
 
     let attestation = attestation_source
         .current_attestation_material()
@@ -321,10 +330,134 @@ fn with_expected_attestation_succeeds_when_digest_matches_measurement() {
     let enclave = FakeEnclaveRuntime::with_expected_attestation(attestation.enclave_measurement);
 
     let view = host
-        .resolve_claimed_task(task, input_ciphertexts, &attestation, &enclave)
+        .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave)
         .expect("resolve with matching attestation digest must succeed");
 
     assert!(matches!(view, HandleStateView::Ready { .. }));
+}
+
+#[test]
+fn attestation_mismatch_surfaces_failure_leaves_handle_pending_and_reclaimable() {
+    let mut host = running_host();
+    let a = handle_key(1);
+    let b = handle_key(2);
+    ingest_imported(
+        &mut host,
+        a,
+        HandleType::Suint256,
+        well_formed_system_ciphertext(a, "suint256"),
+        1,
+        1,
+    );
+    ingest_imported(
+        &mut host,
+        b,
+        HandleType::Suint256,
+        well_formed_system_ciphertext(b, "suint256"),
+        1,
+        2,
+    );
+    let derived = handle_key(10);
+    ingest_derived(
+        &mut host,
+        derived,
+        OperationCode::Add,
+        HandleType::Suint256,
+        vec![a, b],
+        2,
+        1,
+    );
+
+    let tasks = host.claim_resolution_tasks();
+    let task = &tasks[0];
+    let attestation_source = local_attestation_source();
+    let mpc_server = ProgrammableMpcServer::with_successes(vec![
+        fake_enclave_ciphertext(a, 0xC0),
+        fake_enclave_ciphertext(b, 0xC1),
+    ]);
+    let expected = AttestationDigest([0x99; 32]);
+    let enclave = FakeEnclaveRuntime::with_expected_attestation(expected);
+
+    let err = host
+        .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave)
+        .expect_err("mismatched attestation must fail");
+
+    assert_eq!(
+        err,
+        ResolveClaimedTaskError::EnclaveExecutionFailed(
+            EnclaveExecutionError::AttestationVerificationFailure {
+                expected,
+                actual: AttestationDigest([DEFAULT_MEASUREMENT_SEED; 32]),
+            }
+        )
+    );
+    assert_eq!(host.get_handle_state(&derived), HandleStateView::Pending);
+    assert!(
+        !host.is_resolution_task_claimed(&derived),
+        "claim must be released after failed execution so retry policy can re-claim"
+    );
+    assert_eq!(host.claim_resolution_tasks().len(), 1);
+}
+
+#[test]
+fn transform_failure_surfaces_typed_error_leaves_handle_pending_and_reclaimable() {
+    let mut host = running_host();
+    let a = handle_key(1);
+    let b = handle_key(2);
+    ingest_imported(
+        &mut host,
+        a,
+        HandleType::Suint256,
+        well_formed_system_ciphertext(a, "suint256"),
+        1,
+        1,
+    );
+    ingest_imported(
+        &mut host,
+        b,
+        HandleType::Suint256,
+        well_formed_system_ciphertext(b, "suint256"),
+        1,
+        2,
+    );
+    let derived = handle_key(10);
+    ingest_derived(
+        &mut host,
+        derived,
+        OperationCode::Add,
+        HandleType::Suint256,
+        vec![a, b],
+        2,
+        1,
+    );
+
+    let tasks = host.claim_resolution_tasks();
+    let task = &tasks[0];
+    let attestation_source = local_attestation_source();
+    let mpc_server = FailingMpcServer;
+    let enclave = FakeEnclaveRuntime::deterministic();
+
+    let err = host
+        .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave)
+        .expect_err("MPC transform failure must fail resolution");
+
+    assert_eq!(
+        err,
+        ResolveClaimedTaskError::TransformFailed(
+            TransformResolutionInputsError::MpcTransformationFailed {
+                input_index: 0,
+                error: ToEnclaveTransformationError::Unavailable {
+                    detail: "mpc unavailable".to_string(),
+                },
+            }
+        )
+    );
+    assert_eq!(host.get_handle_state(&derived), HandleStateView::Pending);
+    assert!(
+        !host.is_resolution_task_claimed(&derived),
+        "claim must be released after transform failure so retry policy can re-claim"
+    );
+    assert_eq!(host.claim_resolution_tasks().len(), 1);
 }
 
 // ---------- fixtures ----------
@@ -441,16 +574,16 @@ fn ingest_derived(
     block_number: u64,
     log_index: u32,
 ) {
-    let outcome = host
-        .handle_graph_core_mut()
-        .apply_chain_event(ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
-            domain_id: DomainId([DEFAULT_DOMAIN; 32]),
-            handle_key,
-            operation_code,
-            output_handle_type,
-            input_handle_keys,
-            event_ref: event_ref(block_number, log_index),
-        }));
+    let outcome =
+        host.handle_graph_core_mut()
+            .apply_chain_event(ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
+                domain_id: DomainId([DEFAULT_DOMAIN; 32]),
+                handle_key,
+                operation_code,
+                output_handle_type,
+                input_handle_keys,
+                event_ref: event_ref(block_number, log_index),
+            }));
     assert!(matches!(outcome, IngestionOutcome::Recorded(_)));
 }
 
@@ -480,6 +613,19 @@ impl MpcToEnclaveSource for ProgrammableMpcServer {
             .next()
             .expect("ProgrammableMpcServer ran out of queued envelopes");
         Ok(MpcToEnclaveResponse::Success(next))
+    }
+}
+
+struct FailingMpcServer;
+
+impl MpcToEnclaveSource for FailingMpcServer {
+    fn request_to_enclave_transformation(
+        &self,
+        _request: &ToEnclaveTransformationRequest,
+    ) -> Result<MpcToEnclaveResponse, MpcSourceError> {
+        Err(MpcSourceError::Unavailable {
+            detail: "mpc unavailable".to_string(),
+        })
     }
 }
 
