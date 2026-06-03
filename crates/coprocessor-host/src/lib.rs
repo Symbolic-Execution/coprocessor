@@ -126,6 +126,9 @@ impl HostConfig {
         if self.deployment_label.trim().is_empty() {
             return Err(HostConfigError::EmptyDeploymentLabel);
         }
+        if self.retry_policy.max_attempts == 0 {
+            return Err(HostConfigError::RetryPolicyRequiresAttempt);
+        }
         Ok(())
     }
 }
@@ -135,6 +138,7 @@ impl HostConfig {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HostConfigError {
     EmptyDeploymentLabel,
+    RetryPolicyRequiresAttempt,
 }
 
 /// Lifecycle phase of the Coprocessor Host. Transitions are linear:

@@ -496,8 +496,7 @@ fn ready_derived_handle_exposes_structured_receipt_with_correct_fields() {
     ]);
     let enclave = FakeEnclaveRuntime::deterministic();
 
-    let view = host
-        .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
+    let view = host.resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
 
     let HandleStateView::Ready {
         derived_receipt, ..
@@ -568,8 +567,7 @@ fn select_structured_receipt_preserves_predicate_when_true_when_false_order() {
     ]);
     let enclave = FakeEnclaveRuntime::deterministic();
 
-    let view = host
-        .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
+    let view = host.resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
 
     let HandleStateView::Ready {
         derived_receipt, ..
@@ -644,8 +642,7 @@ fn receipt_round_trip_decode_encode_for_each_arity() {
         let mpc_server =
             ProgrammableMpcServer::with_successes(vec![fake_enclave_ciphertext(a, 0xE0)]);
         let enclave = FakeEnclaveRuntime::deterministic();
-        let view = host
-            .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
+        let view = host.resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
         let HandleStateView::Ready {
             derived_receipt, ..
         } = view
@@ -701,8 +698,7 @@ fn receipt_round_trip_decode_encode_for_each_arity() {
             fake_enclave_ciphertext(b, 0xC1),
         ]);
         let enclave = FakeEnclaveRuntime::deterministic();
-        let view = host
-            .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
+        let view = host.resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
         let HandleStateView::Ready {
             derived_receipt, ..
         } = view
@@ -767,8 +763,7 @@ fn receipt_round_trip_decode_encode_for_each_arity() {
             fake_enclave_ciphertext(when_false, 0xD2),
         ]);
         let enclave = FakeEnclaveRuntime::deterministic();
-        let view = host
-            .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
+        let view = host.resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
         let HandleStateView::Ready {
             derived_receipt, ..
         } = view

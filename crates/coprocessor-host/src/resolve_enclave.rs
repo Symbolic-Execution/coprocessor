@@ -170,29 +170,42 @@ fn apply_terminal_failure(
 
 /// Classify an `EnclaveAttestationError` as Retryable or Terminal.
 ///
-/// Attestation unavailability is transient (the attestation service may be
-/// temporarily unreachable); the host may retry while its budget allows.
-fn classify_attestation_error(_error: EnclaveAttestationError) -> FailureClass {
-    FailureClass::Retryable {
-        exhaustion_reason: FailureReason::MpcTransformationFailure {
-            reason: "enclave attestation unavailable: retry budget exhausted".to_string(),
+/// Backend unavailability is transient; malformed or policy-invalid
+/// attestation material is terminal because retrying the same adapter state
+/// cannot make the material valid.
+fn classify_attestation_error(error: EnclaveAttestationError) -> FailureClass {
+    match error {
+        EnclaveAttestationError::BackendUnavailable { .. } => FailureClass::Retryable {
+            exhaustion_reason: FailureReason::MpcTransformationFailure {
+                reason: "enclave attestation unavailable: retry budget exhausted".to_string(),
+            },
         },
+        EnclaveAttestationError::MalformedAttestation { .. } => {
+            FailureClass::Terminal(FailureReason::MpcTransformationFailure {
+                reason: "enclave attestation malformed".to_string(),
+            })
+        }
+        EnclaveAttestationError::MeasurementMismatch { .. } => {
+            FailureClass::Terminal(FailureReason::MpcTransformationFailure {
+                reason: "enclave attestation measurement mismatch".to_string(),
+            })
+        }
+        EnclaveAttestationError::InvalidConfiguration { .. } => {
+            FailureClass::Terminal(FailureReason::MpcTransformationFailure {
+                reason: "enclave attestation invalid configuration".to_string(),
+            })
+        }
     }
 }
 
 /// Classify a `TransformResolutionInputsError` as Retryable or Terminal.
 ///
-/// Only `MpcTransformationFailed { error: Unavailable }` and
-/// `EnclaveAttestationUnavailable` are retryable; all other variants are
+/// Only backend unavailability variants are retryable; all other variants are
 /// terminal MPC transformation failures.
 fn classify_transform_error(error: TransformResolutionInputsError) -> FailureClass {
-    match &error {
-        TransformResolutionInputsError::EnclaveAttestationUnavailable { .. } => {
-            FailureClass::Retryable {
-                exhaustion_reason: FailureReason::MpcTransformationFailure {
-                    reason: "enclave attestation unavailable: retry budget exhausted".to_string(),
-                },
-            }
+    match error {
+        TransformResolutionInputsError::EnclaveAttestationUnavailable { error } => {
+            classify_attestation_error(error)
         }
         TransformResolutionInputsError::MpcTransformationFailed {
             error: ToEnclaveTransformationError::Unavailable { .. },
@@ -206,13 +219,13 @@ fn classify_transform_error(error: TransformResolutionInputsError) -> FailureCla
             let reason = format!(
                 "mpc transformation rejected at input {}: {}",
                 input_index,
-                transform_error_label(error),
+                transform_error_label(&error),
             );
             FailureClass::Terminal(FailureReason::MpcTransformationFailure { reason })
         }
         TransformResolutionInputsError::MalformedSystemCiphertext { input_index, .. } => {
             FailureClass::Terminal(FailureReason::MpcTransformationFailure {
-                reason: format!("malformed system ciphertext at input {input_index}"),
+                reason: format!("malformed system envelope at input {input_index}"),
             })
         }
         TransformResolutionInputsError::TaskInputLengthMismatch {
@@ -221,7 +234,7 @@ fn classify_transform_error(error: TransformResolutionInputsError) -> FailureCla
         } => FailureClass::Terminal(FailureReason::MpcTransformationFailure {
             reason: format!(
                 "task input length mismatch: {handle_key_count} handle keys, \
-                 {system_ciphertext_count} ciphertexts"
+                 {system_ciphertext_count} input envelopes"
             ),
         }),
     }
@@ -249,7 +262,7 @@ fn classify_enclave_error(error: EnclaveExecutionError) -> FailureClass {
         } => FailureClass::Terminal(FailureReason::EnclaveExecutionFailure {
             reason: format!(
                 "enclave input count mismatch: {handle_key_count} handle keys, \
-                 {ciphertext_count} ciphertexts"
+                 {ciphertext_count} input envelopes"
             ),
         }),
         EnclaveExecutionError::OperationNotSupported(_) => {
@@ -259,7 +272,7 @@ fn classify_enclave_error(error: EnclaveExecutionError) -> FailureClass {
         }
         EnclaveExecutionError::InputAadVerificationFailed { input_index, .. } => {
             FailureClass::Terminal(FailureReason::EnclaveExecutionFailure {
-                reason: format!("enclave input aad verification failed at index {input_index}"),
+                reason: format!("enclave input binding verification failed at index {input_index}"),
             })
         }
     }

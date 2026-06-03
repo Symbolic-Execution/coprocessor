@@ -38,7 +38,10 @@ use coprocessor_host::{
 use coprocessor_mpc_client::{
     MpcSourceError, MpcToEnclaveResponse, MpcToEnclaveSource, ToEnclaveTransformationRequest,
 };
-use coprocessor_nitro_enclave::{LocalEnclaveAttestationConfig, LocalEnclaveAttestationSource};
+use coprocessor_nitro_enclave::{
+    EnclaveAttestationError, EnclaveAttestationMaterial, EnclaveAttestationSource,
+    LocalEnclaveAttestationConfig, LocalEnclaveAttestationSource,
+};
 
 const DEFAULT_CHAIN: u64 = 1;
 const DEFAULT_CONTRACT_SEED: u8 = 7;
@@ -140,6 +143,31 @@ fn retryable_enclave_backend_unavailable_keeps_handle_pending_and_allows_reclaim
     assert_eq!(host.claim_resolution_tasks().len(), 1);
 }
 
+// ---------- Retryable attestation: keeps Pending ----------
+
+#[test]
+fn retryable_attestation_backend_unavailable_keeps_handle_pending_and_allows_reclaim() {
+    let mut host = running_host_with_retries(3);
+    let (_, _, derived) = seed_add_derived(&mut host);
+
+    let tasks = host.claim_resolution_tasks();
+    let task = tasks[0].clone();
+
+    let attestation_source = ErrorAttestationSource {
+        error: EnclaveAttestationError::BackendUnavailable {
+            detail: "attestation unavailable".to_string(),
+        },
+    };
+    let mpc_server = UnauthorizedMpcServer;
+    let enclave = FakeEnclaveRuntime::deterministic();
+
+    let view = host.resolve_claimed_task(&task, &mpc_server, &attestation_source, &enclave);
+    assert_eq!(view, HandleStateView::Pending);
+    assert_eq!(host.get_handle_state(&derived), HandleStateView::Pending);
+    assert!(!host.is_resolution_task_claimed(&derived));
+    assert_eq!(host.claim_resolution_tasks().len(), 1);
+}
+
 // ---------- Terminal MPC: transitions to Failed(MpcTransformationFailure) ----------
 
 #[test]
@@ -184,6 +212,34 @@ fn terminal_mpc_failure_transitions_handle_to_failed_mpc_transformation_failure(
         }
     ));
     // Failed handle has no Resolution Readiness.
+    assert_eq!(host.claim_resolution_tasks().len(), 0);
+}
+
+#[test]
+fn malformed_attestation_is_terminal_mpc_transformation_failure() {
+    let mut host = running_host_with_retries(3);
+    let (_, _, derived) = seed_add_derived(&mut host);
+
+    let tasks = host.claim_resolution_tasks();
+    let task = tasks[0].clone();
+    let attestation_source = ErrorAttestationSource {
+        error: EnclaveAttestationError::MalformedAttestation {
+            detail: "raw adapter detail must not surface".to_string(),
+        },
+    };
+    let mpc_server = UnavailableMpcServer;
+    let enclave = FakeEnclaveRuntime::deterministic();
+
+    let view = host.resolve_claimed_task(&task, &mpc_server, &attestation_source, &enclave);
+
+    assert_eq!(
+        view,
+        HandleStateView::Failed {
+            category: HandleStateFailureCategory::MpcTransformationFailure,
+            reason: "enclave attestation malformed".to_string(),
+        },
+    );
+    assert_eq!(host.get_handle_state(&derived), view);
     assert_eq!(host.claim_resolution_tasks().len(), 0);
 }
 
@@ -789,6 +845,18 @@ fn ingest_pair_and_derived_into_core_with_persistence(
 }
 
 // ---------- fake backends ----------
+
+struct ErrorAttestationSource {
+    error: EnclaveAttestationError,
+}
+
+impl EnclaveAttestationSource for ErrorAttestationSource {
+    fn current_attestation_material(
+        &self,
+    ) -> Result<EnclaveAttestationMaterial, EnclaveAttestationError> {
+        Err(self.error.clone())
+    }
+}
 
 struct UnavailableMpcServer;
 
