@@ -132,6 +132,7 @@ fn repeated_resolve_for_failed_handle_returns_stable_state_without_registering_i
     );
     let expected = HandleStateView::Failed {
         category: HandleStateFailureCategory::OperationViolation,
+        reason: "wrong arity: expected 2, actual 1".to_string(),
     };
 
     let first = host.resolve_handle(request_id(0xA1), &failed);

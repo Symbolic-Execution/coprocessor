@@ -76,6 +76,7 @@ fn host_rejects_invalid_configuration_before_starting() {
     let invalid = HostConfig {
         deployment_label: "   ".to_string(),
         chain_view: Default::default(),
+        retry_policy: Default::default(),
     };
     let mut host = CoprocessorHost::new(invalid);
 
@@ -149,6 +150,7 @@ fn validate_config_accepts_local_development_and_rejects_empty_label() {
     let err = CoprocessorHost::validate_config(&HostConfig {
         deployment_label: String::new(),
         chain_view: Default::default(),
+        retry_policy: Default::default(),
     })
     .unwrap_err();
     assert_eq!(err, HostConfigError::EmptyDeploymentLabel);

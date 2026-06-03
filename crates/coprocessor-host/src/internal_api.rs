@@ -6,7 +6,8 @@
 //! and `Failed` exposes only a stable category.
 
 use coprocessor_handle_graph_core::{
-    FailureReason, HandleRecord, HandleState, MaterializationReceipt, SystemCiphertextV1,
+    FailureReason, HandleRecord, HandleState, LineageViolation, MaterializationReceipt,
+    OperationViolation, SystemCiphertextV1,
 };
 
 /// Coordinator-facing view of a Canonical Handle Record. This is the response
@@ -29,9 +30,13 @@ pub enum HandleStateView {
         materialization_receipt: MaterializationReceipt,
     },
     /// A known Canonical Handle Record whose Resolution concluded as Failed.
-    /// The category is stable, non-secret, and free of raw failure detail.
+    /// The `category` is stable and non-secret. The `reason` is a
+    /// non-secret human-readable string — it names the failure category and
+    /// affected input position or count only, never ciphertext bytes, wrapped
+    /// keys, reader secrets, enclave private keys, or plaintext.
     Failed {
         category: HandleStateFailureCategory,
+        reason: String,
     },
 }
 
@@ -65,6 +70,7 @@ pub(crate) fn project_canonical(record: Option<&HandleRecord>) -> HandleStateVie
         },
         HandleState::Failed { reason } => HandleStateView::Failed {
             category: failure_category(reason),
+            reason: failure_reason_string(reason),
         },
     }
 }
@@ -73,5 +79,41 @@ fn failure_category(reason: &FailureReason) -> HandleStateFailureCategory {
     match reason {
         FailureReason::LineageViolation(_) => HandleStateFailureCategory::LineageViolation,
         FailureReason::OperationViolation(_) => HandleStateFailureCategory::OperationViolation,
+        FailureReason::MpcTransformationFailure { .. } => {
+            HandleStateFailureCategory::MpcTransformationFailure
+        }
+        FailureReason::EnclaveExecutionFailure { .. } => {
+            HandleStateFailureCategory::EnclaveExecutionFailure
+        }
+        FailureReason::MaterializationFailure { .. } => {
+            HandleStateFailureCategory::MaterializationFailure
+        }
+    }
+}
+
+/// Extract a non-secret, stable reason string from a `FailureReason`. The
+/// returned string contains only category names, counts, and input indices —
+/// never ciphertext bytes, wrapped keys, reader secrets, enclave private keys,
+/// attestation documents, or decrypted payloads.
+fn failure_reason_string(reason: &FailureReason) -> String {
+    match reason {
+        FailureReason::LineageViolation(v) => match v {
+            LineageViolation::DuplicateHandleKey { .. } => "duplicate handle key".to_string(),
+            LineageViolation::UnknownInputHandle { .. } => "unknown input handle".to_string(),
+        },
+        FailureReason::OperationViolation(v) => match v {
+            OperationViolation::WrongArity {
+                expected, actual, ..
+            } => format!("wrong arity: expected {expected}, actual {actual}"),
+            OperationViolation::WrongInputHandleType { input_index, .. } => {
+                format!("wrong input handle type at index {input_index}")
+            }
+            OperationViolation::WrongOutputHandleType { .. } => {
+                "wrong output handle type".to_string()
+            }
+        },
+        FailureReason::MpcTransformationFailure { reason } => reason.clone(),
+        FailureReason::EnclaveExecutionFailure { reason } => reason.clone(),
+        FailureReason::MaterializationFailure { reason } => reason.clone(),
     }
 }

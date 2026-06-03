@@ -46,8 +46,6 @@ pub use to_enclave_transformation::{
 
 mod resolve_enclave;
 
-pub use resolve_enclave::ResolveClaimedTaskError;
-
 const ALL_DEPENDENCIES: [DependencyName; 3] = [
     DependencyName::SymVmEventSurface,
     DependencyName::Mpc,
@@ -76,6 +74,23 @@ impl DependencyName {
     }
 }
 
+/// Retry policy for resolution failures. Controls how many times the host
+/// attempts a Resolution Task before declaring the Derived Handle Failed.
+/// Uses a deterministic attempt counter — no clock, no randomness.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RetryPolicy {
+    /// Maximum number of attempts (including the first). When a backend
+    /// returns a transient error and `attempts_used >= max_attempts` the
+    /// failure is treated as terminal. Must be at least 1.
+    pub max_attempts: u32,
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self { max_attempts: 3 }
+    }
+}
+
 /// Configuration loaded by the Coprocessor Host before startup. The shape is
 /// deliberately minimal in this scaffold: the runtime/stack decision (issue
 /// #18) will extend this with endpoints, persistence, and credentials.
@@ -87,6 +102,10 @@ pub struct HostConfig {
     /// [`ChainView::Safe`]; deployments that require stricter confirmation
     /// can choose [`ChainView::Finalized`].
     pub chain_view: ChainView,
+    /// Retry policy applied when MPC or Enclave backend returns a transient
+    /// failure. The handle stays Pending while attempts remain; on budget
+    /// exhaustion the handle transitions to Failed.
+    pub retry_policy: RetryPolicy,
 }
 
 impl HostConfig {
@@ -97,6 +116,7 @@ impl HostConfig {
         Self {
             deployment_label: "local-development".to_string(),
             chain_view: ChainView::default(),
+            retry_policy: RetryPolicy::default(),
         }
     }
 
@@ -371,8 +391,10 @@ impl CoprocessorHost {
     /// return. Repeated Resolve Handle Requests during a claim continue to
     /// observe Pending and attach to the same [`ResolutionIntent`].
     pub fn claim_resolution_tasks(&mut self) -> Vec<ResolutionTask> {
-        self.resolution_claims
-            .claim_from_readiness(&self.handle_graph_core)
+        self.resolution_claims.claim_from_readiness(
+            &self.handle_graph_core,
+            self.config.retry_policy.max_attempts,
+        )
     }
 
     /// Transform a claimed Resolution Task's ordered input
@@ -414,21 +436,28 @@ impl CoprocessorHost {
     ///
     /// Takes the scheduler `task`, transforms its ordered inputs through MPC,
     /// builds the enclave-runtime [`ResolutionTask`], calls `enclave.execute`,
-    /// bridges the [`EnclaveExecutionOutcome`] into core domain types (encoding
-    /// `SystemCiphertextV1` via `.encode()` and the Materialization Receipt via
-    /// a minimal deterministic byte encoding), and transitions the Pending
-    /// Derived Handle to Ready. On success the scheduler claim is released.
+    /// bridges the [`EnclaveExecutionOutcome`] into core domain types, and
+    /// transitions the Pending Derived Handle to Ready. On success the
+    /// scheduler claim is released and the view reflects `Ready`.
     ///
-    /// On [`ResolveClaimedTaskError::EnclaveExecutionFailed`] the Derived
-    /// Handle remains Pending — no Handle Graph state changes. Failed-state
-    /// classification and retry policy are handled by issue #41.
+    /// On a terminal MPC, Enclave, or Materialization failure the Pending
+    /// Derived Handle transitions to `Failed` and the claim is released. On a
+    /// transient backend failure while the retry budget allows it the Handle
+    /// stays Pending, the budget decrements, and the claim is released so the
+    /// scheduler may re-claim on a later tick. When the retry budget is
+    /// exhausted a transient failure becomes terminal and the Handle transitions
+    /// to `Failed`.
+    ///
+    /// The returned [`HandleStateView`] always reflects the Handle's state
+    /// after the call: `Ready` on success, `Failed` on terminal failure, and
+    /// `Pending` on retryable failure while budget remains.
     pub fn resolve_claimed_task(
         &mut self,
         task: &ResolutionTask,
         mpc_source: &dyn MpcToEnclaveSource,
         attestation_source: &dyn EnclaveAttestationSource,
         enclave: &dyn EnclaveRuntime,
-    ) -> Result<HandleStateView, ResolveClaimedTaskError> {
+    ) -> HandleStateView {
         resolve_enclave::resolve_claimed_task(
             task,
             mpc_source,

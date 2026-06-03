@@ -87,6 +87,17 @@ pub enum HandleState {
 pub enum FailureReason {
     LineageViolation(LineageViolation),
     OperationViolation(OperationViolation),
+    /// Terminal failure during MPC To-Enclave Transformation. `reason` is
+    /// non-secret: it names the failure category and input position only,
+    /// never ciphertext bytes, wrapped keys, or plaintext.
+    MpcTransformationFailure { reason: String },
+    /// Terminal failure during Enclave Execution. `reason` is non-secret:
+    /// it names the failure category and affected input index only.
+    EnclaveExecutionFailure { reason: String },
+    /// Terminal failure during core materialization. Indicates an
+    /// orchestration bug (the Handle was not Pending or not Derived).
+    /// `reason` is non-secret.
+    MaterializationFailure { reason: String },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -207,6 +218,23 @@ pub enum MaterializeDerivedError {
     Tombstoned,
     /// The Handle Record's lineage is Source, not Derived. Only Derived
     /// Handles can be materialized through Enclave Execution.
+    NotDerived,
+    /// The Handle Record is not in the Pending state (already Ready or Failed).
+    NotPending,
+}
+
+/// Typed rejection reasons for [`HandleGraphCore::fail_derived_handle`].
+/// Mirrors [`MaterializeDerivedError`]: only a Pending, canonical, Derived,
+/// non-tombstoned handle may transition to Failed. Every variant is safe to
+/// surface to the Coprocessor Host: none embed ciphertext, wrapped keys, or
+/// plaintext.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FailDerivedError {
+    /// No Handle Record exists for the given Handle Key.
+    UnknownHandle,
+    /// The Handle Record exists but has been tombstoned by Orphan Discard.
+    Tombstoned,
+    /// The Handle Record's lineage is Source, not Derived.
     NotDerived,
     /// The Handle Record is not in the Pending state (already Ready or Failed).
     NotPending,
@@ -530,6 +558,63 @@ impl HandleGraphCore {
             system_ciphertext,
             materialization_receipt,
         )?;
+        persistence.put_handle_record(record.clone());
+        Ok(record)
+    }
+
+    /// Transition a Pending Derived Handle Record to Failed by binding the
+    /// supplied `reason`. This is the only path from Pending to Failed for
+    /// terminal resolution errors; the invariant is enforced here.
+    ///
+    /// Returns the updated [`HandleRecord`] on success. Returns a typed
+    /// [`FailDerivedError`] when the handle key has no canonical record, is
+    /// tombstoned, is not Derived-lineage, or is not in the Pending state.
+    /// On error the record is left unchanged.
+    ///
+    /// The `reason` must be non-secret: callers must sanitize backend error
+    /// detail before constructing it (no ciphertext bytes, wrapped keys,
+    /// reader secrets, enclave private keys, or decrypted payloads).
+    pub fn fail_derived_handle(
+        &mut self,
+        handle_key: &HandleKey,
+        reason: FailureReason,
+    ) -> Result<HandleRecord, FailDerivedError> {
+        let record = self
+            .records
+            .get_mut(handle_key)
+            .ok_or(FailDerivedError::UnknownHandle)?;
+
+        if record.is_tombstoned {
+            return Err(FailDerivedError::Tombstoned);
+        }
+
+        if !record.is_canonical {
+            return Err(FailDerivedError::UnknownHandle);
+        }
+
+        if !matches!(record.lineage, HandleLineage::Derived { .. }) {
+            return Err(FailDerivedError::NotDerived);
+        }
+
+        if record.state != HandleState::Pending {
+            return Err(FailDerivedError::NotPending);
+        }
+
+        record.state = HandleState::Failed { reason };
+
+        Ok(record.clone())
+    }
+
+    /// Same as [`HandleGraphCore::fail_derived_handle`] but mirrors the
+    /// updated Failed record into `persistence` on success. Follows the same
+    /// write-through pattern as [`HandleGraphCore::apply_chain_event_with_persistence`].
+    pub fn fail_derived_handle_with_persistence<P: HandlePersistence>(
+        &mut self,
+        handle_key: &HandleKey,
+        reason: FailureReason,
+        persistence: &mut P,
+    ) -> Result<HandleRecord, FailDerivedError> {
+        let record = self.fail_derived_handle(handle_key, reason)?;
         persistence.put_handle_record(record.clone());
         Ok(record)
     }

@@ -4,28 +4,32 @@
 //! `EnclaveCiphertextV1` through MPC, builds the enclave-runtime
 //! [`ResolutionTask`], calls the [`EnclaveRuntime`] boundary, and bridges the
 //! [`EnclaveExecutionOutcome`] back into core domain types so the Handle Graph
-//! can transition the Pending Derived Handle to Ready.
+//! can transition the Pending Derived Handle to Ready or Failed.
 //!
-//! Bridging:
-//! - `ciphertext_binding::SystemCiphertextV1` (structured) → `encode()` →
-//!   `core::SystemCiphertextV1(Vec<u8>)` (opaque bytes).
-//! - `EnclaveMaterializationReceipt` → minimal deterministic byte encoding →
-//!   `core::MaterializationReceipt(Vec<u8>)`. The encoding contains only
-//!   non-secret evidence (OperationCode, output Handle Key, ordered input Handle
-//!   Keys, attestation digest), never plaintext or key material.
+//! Failure classification:
+//! - **Terminal** (MPC or Enclave errors that indicate permanent failure):
+//!   the Pending Derived Handle transitions to `Failed` with a stable
+//!   non-secret category and reason, and the claim is released.
+//! - **Retryable** (transient backend unavailability): the Handle stays
+//!   Pending, the retry budget decrements, and the claim is released so the
+//!   scheduler can re-claim on a later tick. When the budget is exhausted a
+//!   retryable failure is promoted to terminal.
+//! - **Materialization failures** (core rejects the Ready transition) are
+//!   always terminal; they indicate an orchestration bug.
 //!
-//! Privacy: errors carry Handle Key identifiers and counts but never ciphertext
-//! bytes, wrapped keys, or enclave private key material.
+//! Privacy: reason strings carry Handle Key identifiers, counts, and failure
+//! categories only — never ciphertext bytes, wrapped keys, enclave private
+//! key material, reader secrets, or decrypted payloads.
 
 use coprocessor_ciphertext_binding::{EnclaveCiphertextV1, RequestId};
 use coprocessor_enclave_runtime::{
     EnclaveExecutionError, EnclaveRuntime, ResolutionTask as EnclaveResolutionTask,
 };
 use coprocessor_handle_graph_core::{
-    HandleGraphCore, HandleKey, MaterializationReceipt, MaterializeDerivedError, OperationCode,
-    SystemCiphertextV1,
+    FailureReason, HandleGraphCore, HandleKey, MaterializationReceipt, MaterializeDerivedError,
+    OperationCode, SystemCiphertextV1,
 };
-use coprocessor_mpc_client::MpcToEnclaveSource;
+use coprocessor_mpc_client::{MpcToEnclaveSource, ToEnclaveTransformationError};
 use coprocessor_nitro_enclave::{
     EnclaveAttestationError, EnclaveAttestationMaterial, EnclaveAttestationSource,
 };
@@ -37,23 +41,15 @@ use crate::to_enclave_transformation::{
     transform_resolution_task_inputs, TransformResolutionInputsError,
 };
 
-/// Reasons [`crate::CoprocessorHost::resolve_claimed_task`] can fail.
-///
-/// On `EnclaveExecutionFailed` the Derived Handle remains Pending — no Handle
-/// Graph state changes. On `MaterializationFailed` the call is a bug in the
-/// orchestration layer (a claimed task should always have a Pending Derived
-/// Handle); it is included for defensive completeness.
-///
-/// No variant embeds ciphertext bytes, wrapped keys, or enclave private key
-/// material, mirroring the sanitized error surfaces elsewhere in this crate.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ResolveClaimedTaskError {
-    /// MPC To-Enclave Transformation failed. The Derived Handle remains Pending.
-    TransformFailed(TransformResolutionInputsError),
-    /// Enclave Execution failed. The Derived Handle remains Pending.
-    EnclaveExecutionFailed(EnclaveExecutionError),
-    /// The core rejected materialization. This indicates an orchestration bug.
-    MaterializationFailed(MaterializeDerivedError),
+/// Classification of a resolution failure: transient (retry budget applies)
+/// vs terminal (handle must transition to Failed immediately).
+enum FailureClass {
+    /// Transient backend unavailability — decrement budget, keep Pending.
+    /// `exhaustion_reason` is used when the budget hits zero: the failure
+    /// then becomes terminal with the appropriate category and reason.
+    Retryable { exhaustion_reason: FailureReason },
+    /// Permanent failure — transition to Failed with this reason.
+    Terminal(FailureReason),
 }
 
 /// Execute one claimed Resolution Task through the Enclave boundary and bind
@@ -61,19 +57,18 @@ pub enum ResolveClaimedTaskError {
 ///
 /// 1. Fetches one Enclave attestation target and transforms the task's ordered
 ///    input `SystemCiphertextV1` values through MPC.
-/// 2. Builds the enclave-runtime [`EnclaveResolutionTask`] from the scheduler
-///    `task` and transformed inputs, preserving input order exactly.
-/// 3. Calls `enclave.execute`.
-/// 4. Bridges the outcome: encodes the ciphertext-binding `SystemCiphertextV1`
-///    via `.encode()` into the core's opaque `SystemCiphertextV1(Vec<u8>)`;
-///    encodes the `EnclaveMaterializationReceipt` into a minimal deterministic
-///    `MaterializationReceipt(Vec<u8>)`.
-/// 5. Calls `core.materialize_derived_handle` to transition Pending -> Ready.
-/// 6. Releases the claim via `claims.release`.
+/// 2. Builds the enclave-runtime [`EnclaveResolutionTask`] and calls `enclave.execute`.
+/// 3. On success: bridges the outcome into core domain types and calls
+///    `core.materialize_derived_handle` to transition Pending -> Ready.
+/// 4. On failure: classifies as Retryable or Terminal.
+///    - Retryable with budget: decrements budget, releases claim (Pending).
+///    - Retryable without budget: promotes to Terminal.
+///    - Terminal: calls `core.fail_derived_handle` (Pending -> Failed).
+/// 5. Releases the claim on all paths.
 ///
-/// On transform or Enclave Execution failure the Handle State is left Pending.
-/// The claim is released on every returned error so the task can be claimed
-/// again while issue #41 defines retry classification and backoff.
+/// Returns the [`HandleStateView`] reflecting the handle's state after the
+/// call: `Ready` on success, `Failed` on terminal failure, `Pending` on
+/// retryable failure while budget remains.
 pub(crate) fn resolve_claimed_task(
     task: &ResolutionTask,
     mpc_source: &dyn MpcToEnclaveSource,
@@ -81,14 +76,12 @@ pub(crate) fn resolve_claimed_task(
     enclave: &dyn EnclaveRuntime,
     core: &mut HandleGraphCore,
     claims: &mut ResolutionTaskClaims,
-) -> Result<HandleStateView, ResolveClaimedTaskError> {
+) -> HandleStateView {
     let attestation = match attestation_source.current_attestation_material() {
         Ok(attestation) => attestation,
         Err(error) => {
-            claims.release(&task.output_handle_key);
-            return Err(ResolveClaimedTaskError::TransformFailed(
-                TransformResolutionInputsError::EnclaveAttestationUnavailable { error },
-            ));
+            let class = classify_attestation_error(error);
+            return handle_failure(task, core, claims, class);
         }
     };
 
@@ -99,8 +92,8 @@ pub(crate) fn resolve_claimed_task(
         match transform_resolution_task_inputs(task, mpc_source, &pinned_attestation) {
             Ok(input_ciphertexts) => input_ciphertexts,
             Err(error) => {
-                claims.release(&task.output_handle_key);
-                return Err(ResolveClaimedTaskError::TransformFailed(error));
+                let class = classify_transform_error(error);
+                return handle_failure(task, core, claims, class);
             }
         };
 
@@ -109,8 +102,8 @@ pub(crate) fn resolve_claimed_task(
     let outcome = match enclave.execute(&enclave_task) {
         Ok(outcome) => outcome,
         Err(error) => {
-            claims.release(&task.output_handle_key);
-            return Err(ResolveClaimedTaskError::EnclaveExecutionFailed(error));
+            let class = classify_enclave_error(error);
+            return handle_failure(task, core, claims, class);
         }
     };
 
@@ -120,18 +113,177 @@ pub(crate) fn resolve_claimed_task(
     // Bridge: EnclaveMaterializationReceipt -> minimal opaque bytes
     let core_receipt = encode_materialization_receipt(&outcome.receipt);
 
-    if let Err(error) =
-        core.materialize_derived_handle(&task.output_handle_key, core_ciphertext, core_receipt)
-    {
-        claims.release(&task.output_handle_key);
-        return Err(ResolveClaimedTaskError::MaterializationFailed(error));
+    match core.materialize_derived_handle(&task.output_handle_key, core_ciphertext, core_receipt) {
+        Ok(_) => {
+            claims.clear_budget(&task.output_handle_key);
+            claims.release(&task.output_handle_key);
+            project_canonical(core.canonical_handle(&task.output_handle_key))
+        }
+        Err(error) => {
+            let class = FailureClass::Terminal(FailureReason::MaterializationFailure {
+                reason: format!("materialization failed: {}", materialize_error_label(error)),
+            });
+            handle_failure(task, core, claims, class)
+        }
     }
+}
 
+/// Shared failure dispatch: check budget, either keep Pending or transition
+/// to Failed, then release the claim and return the updated view.
+fn handle_failure(
+    task: &ResolutionTask,
+    core: &mut HandleGraphCore,
+    claims: &mut ResolutionTaskClaims,
+    class: FailureClass,
+) -> HandleStateView {
+    let terminal_reason = match class {
+        FailureClass::Retryable { exhaustion_reason } => {
+            let remaining = claims.remaining_budget(&task.output_handle_key);
+            if remaining > 0 {
+                claims.consume_budget(&task.output_handle_key);
+                claims.release(&task.output_handle_key);
+                return HandleStateView::Pending;
+            }
+            // Budget exhausted: promote to terminal using the category-aware
+            // exhaustion reason supplied by the classifier.
+            exhaustion_reason
+        }
+        FailureClass::Terminal(reason) => reason,
+    };
+
+    apply_terminal_failure(task, core, claims, terminal_reason)
+}
+
+/// Apply a terminal failure: transition the Handle to Failed, clear the
+/// budget, release the claim, and return the updated view.
+fn apply_terminal_failure(
+    task: &ResolutionTask,
+    core: &mut HandleGraphCore,
+    claims: &mut ResolutionTaskClaims,
+    reason: FailureReason,
+) -> HandleStateView {
+    let _ = core.fail_derived_handle(&task.output_handle_key, reason);
+    claims.clear_budget(&task.output_handle_key);
     claims.release(&task.output_handle_key);
+    project_canonical(core.canonical_handle(&task.output_handle_key))
+}
 
-    Ok(project_canonical(
-        core.canonical_handle(&task.output_handle_key),
-    ))
+/// Classify an `EnclaveAttestationError` as Retryable or Terminal.
+///
+/// Attestation unavailability is transient (the attestation service may be
+/// temporarily unreachable); the host may retry while its budget allows.
+fn classify_attestation_error(_error: EnclaveAttestationError) -> FailureClass {
+    FailureClass::Retryable {
+        exhaustion_reason: FailureReason::MpcTransformationFailure {
+            reason: "enclave attestation unavailable: retry budget exhausted".to_string(),
+        },
+    }
+}
+
+/// Classify a `TransformResolutionInputsError` as Retryable or Terminal.
+///
+/// Only `MpcTransformationFailed { error: Unavailable }` and
+/// `EnclaveAttestationUnavailable` are retryable; all other variants are
+/// terminal MPC transformation failures.
+fn classify_transform_error(error: TransformResolutionInputsError) -> FailureClass {
+    match &error {
+        TransformResolutionInputsError::EnclaveAttestationUnavailable { .. } => {
+            FailureClass::Retryable {
+                exhaustion_reason: FailureReason::MpcTransformationFailure {
+                    reason: "enclave attestation unavailable: retry budget exhausted".to_string(),
+                },
+            }
+        }
+        TransformResolutionInputsError::MpcTransformationFailed {
+            error: ToEnclaveTransformationError::Unavailable { .. },
+            ..
+        } => FailureClass::Retryable {
+            exhaustion_reason: FailureReason::MpcTransformationFailure {
+                reason: "mpc transformation unavailable: retry budget exhausted".to_string(),
+            },
+        },
+        TransformResolutionInputsError::MpcTransformationFailed { input_index, error } => {
+            let reason = format!(
+                "mpc transformation rejected at input {}: {}",
+                input_index,
+                transform_error_label(error),
+            );
+            FailureClass::Terminal(FailureReason::MpcTransformationFailure { reason })
+        }
+        TransformResolutionInputsError::MalformedSystemCiphertext { input_index, .. } => {
+            FailureClass::Terminal(FailureReason::MpcTransformationFailure {
+                reason: format!("malformed system ciphertext at input {input_index}"),
+            })
+        }
+        TransformResolutionInputsError::TaskInputLengthMismatch {
+            handle_key_count,
+            system_ciphertext_count,
+        } => FailureClass::Terminal(FailureReason::MpcTransformationFailure {
+            reason: format!(
+                "task input length mismatch: {handle_key_count} handle keys, \
+                 {system_ciphertext_count} ciphertexts"
+            ),
+        }),
+    }
+}
+
+/// Classify an `EnclaveExecutionError` as Retryable or Terminal.
+///
+/// Only `BackendUnavailable` is retryable; all other variants are terminal
+/// enclave execution failures.
+fn classify_enclave_error(error: EnclaveExecutionError) -> FailureClass {
+    match error {
+        EnclaveExecutionError::BackendUnavailable => FailureClass::Retryable {
+            exhaustion_reason: FailureReason::EnclaveExecutionFailure {
+                reason: "enclave backend unavailable: retry budget exhausted".to_string(),
+            },
+        },
+        EnclaveExecutionError::AttestationVerificationFailure { .. } => {
+            FailureClass::Terminal(FailureReason::EnclaveExecutionFailure {
+                reason: "enclave attestation verification failed".to_string(),
+            })
+        }
+        EnclaveExecutionError::InputCountMismatch {
+            handle_key_count,
+            ciphertext_count,
+        } => FailureClass::Terminal(FailureReason::EnclaveExecutionFailure {
+            reason: format!(
+                "enclave input count mismatch: {handle_key_count} handle keys, \
+                 {ciphertext_count} ciphertexts"
+            ),
+        }),
+        EnclaveExecutionError::OperationNotSupported(_) => {
+            FailureClass::Terminal(FailureReason::EnclaveExecutionFailure {
+                reason: "enclave operation not supported".to_string(),
+            })
+        }
+        EnclaveExecutionError::InputAadVerificationFailed { input_index, .. } => {
+            FailureClass::Terminal(FailureReason::EnclaveExecutionFailure {
+                reason: format!(
+                    "enclave input aad verification failed at index {input_index}"
+                ),
+            })
+        }
+    }
+}
+
+fn transform_error_label(error: &ToEnclaveTransformationError) -> &'static str {
+    match error {
+        ToEnclaveTransformationError::Unavailable { .. } => "unavailable",
+        ToEnclaveTransformationError::MalformedResponse => "malformed response",
+        ToEnclaveTransformationError::Unauthorized => "unauthorized",
+        ToEnclaveTransformationError::InvalidBinding => "invalid binding",
+        ToEnclaveTransformationError::InvalidAttestation => "invalid attestation",
+    }
+}
+
+fn materialize_error_label(error: MaterializeDerivedError) -> &'static str {
+    match error {
+        MaterializeDerivedError::UnknownHandle => "unknown handle",
+        MaterializeDerivedError::Tombstoned => "tombstoned handle",
+        MaterializeDerivedError::NotDerived => "not derived",
+        MaterializeDerivedError::NotPending => "not pending",
+    }
 }
 
 struct PinnedAttestationSource {
