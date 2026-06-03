@@ -59,16 +59,16 @@ fn lineage_violation_unknown_input_is_failed_via_get_and_resolve() {
     ingest_imported(&mut host, known, HandleType::Suint256, 1, 1);
 
     // Derived operation references unknown — triggers LineageViolation::UnknownInputHandle.
-    let outcome = host
-        .handle_graph_core_mut()
-        .apply_chain_event(ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
-            domain_id: DomainId([DEFAULT_DOMAIN; 32]),
-            handle_key: derived,
-            operation_code: OperationCode::Add,
-            output_handle_type: HandleType::Suint256,
-            input_handle_keys: vec![known, unknown],
-            event_ref: event_ref(2, 1),
-        }));
+    let outcome =
+        host.handle_graph_core_mut()
+            .apply_chain_event(ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
+                domain_id: DomainId([DEFAULT_DOMAIN; 32]),
+                handle_key: derived,
+                operation_code: OperationCode::Add,
+                output_handle_type: HandleType::Suint256,
+                input_handle_keys: vec![known, unknown],
+                event_ref: event_ref(2, 1),
+            }));
     // Handle is stored in Failed state (not a DuplicateHandleKeyRejected).
     assert!(
         matches!(outcome, IngestionOutcome::Recorded(_)),
@@ -130,16 +130,16 @@ fn operation_violation_wrong_arity_is_failed_via_get_and_resolve() {
     ingest_imported(&mut host, a, HandleType::Suint256, 1, 1);
 
     // Add requires 2 inputs; supply 1 → OperationViolation::WrongArity.
-    let outcome = host
-        .handle_graph_core_mut()
-        .apply_chain_event(ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
-            domain_id: DomainId([DEFAULT_DOMAIN; 32]),
-            handle_key: derived,
-            operation_code: OperationCode::Add,
-            output_handle_type: HandleType::Suint256,
-            input_handle_keys: vec![a],
-            event_ref: event_ref(2, 1),
-        }));
+    let outcome =
+        host.handle_graph_core_mut()
+            .apply_chain_event(ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
+                domain_id: DomainId([DEFAULT_DOMAIN; 32]),
+                handle_key: derived,
+                operation_code: OperationCode::Add,
+                output_handle_type: HandleType::Suint256,
+                input_handle_keys: vec![a],
+                event_ref: event_ref(2, 1),
+            }));
     assert!(matches!(outcome, IngestionOutcome::Recorded(_)));
 
     let get_view = host.get_handle_state(&derived);
@@ -190,16 +190,16 @@ fn operation_violation_wrong_input_type_is_failed_via_get_and_resolve() {
     ingest_imported(&mut host, sbool, HandleType::Sbool, 1, 2);
 
     // Add requires Suint256 inputs; sbool at index 1 → WrongInputHandleType.
-    let outcome = host
-        .handle_graph_core_mut()
-        .apply_chain_event(ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
-            domain_id: DomainId([DEFAULT_DOMAIN; 32]),
-            handle_key: derived,
-            operation_code: OperationCode::Add,
-            output_handle_type: HandleType::Suint256,
-            input_handle_keys: vec![suint, sbool],
-            event_ref: event_ref(2, 1),
-        }));
+    let outcome =
+        host.handle_graph_core_mut()
+            .apply_chain_event(ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
+                domain_id: DomainId([DEFAULT_DOMAIN; 32]),
+                handle_key: derived,
+                operation_code: OperationCode::Add,
+                output_handle_type: HandleType::Suint256,
+                input_handle_keys: vec![suint, sbool],
+                event_ref: event_ref(2, 1),
+            }));
     assert!(matches!(outcome, IngestionOutcome::Recorded(_)));
 
     let get_view = host.get_handle_state(&derived);
@@ -215,7 +215,20 @@ fn operation_violation_wrong_input_type_is_failed_via_get_and_resolve() {
     );
 
     let resolve_view = host.resolve_handle(RequestId([0x03; 32]), &derived);
-    assert_eq!(get_view, resolve_view, "get and resolve must agree on OperationViolation");
+    assert!(
+        matches!(
+            &resolve_view,
+            HandleStateView::Failed {
+                category: HandleStateFailureCategory::OperationViolation,
+                ..
+            }
+        ),
+        "resolve_handle must return OperationViolation(WrongInputHandleType), got {resolve_view:?}"
+    );
+    assert_eq!(
+        get_view, resolve_view,
+        "get and resolve must agree on OperationViolation"
+    );
 
     let HandleStateView::Failed { reason, .. } = &get_view else {
         unreachable!()
@@ -267,7 +280,10 @@ fn terminal_mpc_failure_is_failed_mpc_category_via_get_and_resolve() {
 
     // Both API paths reflect the same Failed state.
     let get_view = host.get_handle_state(&derived);
-    assert_eq!(view, get_view, "get_handle_state must agree with resolve_claimed_task");
+    assert_eq!(
+        view, get_view,
+        "get_handle_state must agree with resolve_claimed_task"
+    );
 
     let resolve_view = host.resolve_handle(RequestId([0x04; 32]), &derived);
     assert!(
@@ -280,7 +296,10 @@ fn terminal_mpc_failure_is_failed_mpc_category_via_get_and_resolve() {
         ),
         "resolve_handle must return MpcTransformationFailure, got {resolve_view:?}"
     );
-    assert_eq!(get_view, resolve_view, "get and resolve must agree on MpcTransformationFailure");
+    assert_eq!(
+        get_view, resolve_view,
+        "get and resolve must agree on MpcTransformationFailure"
+    );
 
     // Failed handle is no longer claimable.
     assert_eq!(host.claim_resolution_tasks().len(), 0);
@@ -331,7 +350,10 @@ fn terminal_enclave_failure_is_failed_enclave_category_via_get_and_resolve() {
     assert_reason_is_non_secret(reason);
 
     let get_view = host.get_handle_state(&derived);
-    assert_eq!(view, get_view, "get_handle_state must agree with resolve_claimed_task");
+    assert_eq!(
+        view, get_view,
+        "get_handle_state must agree with resolve_claimed_task"
+    );
 
     let resolve_view = host.resolve_handle(RequestId([0x05; 32]), &derived);
     assert!(
@@ -344,7 +366,10 @@ fn terminal_enclave_failure_is_failed_enclave_category_via_get_and_resolve() {
         ),
         "resolve_handle must return EnclaveExecutionFailure, got {resolve_view:?}"
     );
-    assert_eq!(get_view, resolve_view, "get and resolve must agree on EnclaveExecutionFailure");
+    assert_eq!(
+        get_view, resolve_view,
+        "get and resolve must agree on EnclaveExecutionFailure"
+    );
 
     assert_eq!(host.claim_resolution_tasks().len(), 0);
     assert!(!host.is_resolution_task_claimed(&derived));
@@ -445,7 +470,10 @@ fn violation_reason_strings_contain_no_secret_material() {
     else {
         panic!("expected Failed(LineageViolation)");
     };
-    assert!(!lineage_reason.is_empty(), "lineage reason must be non-empty");
+    assert!(
+        !lineage_reason.is_empty(),
+        "lineage reason must be non-empty"
+    );
     assert_reason_is_non_secret(&lineage_reason);
 
     // Operation violation via wrong arity.
@@ -592,16 +620,16 @@ fn seed_add_derived(host: &mut CoprocessorHost) -> (HandleKey, HandleKey, Handle
     let derived = handle_key(0x10);
     ingest_imported(host, a, HandleType::Suint256, 1, 1);
     ingest_imported(host, b, HandleType::Suint256, 1, 2);
-    let outcome = host
-        .handle_graph_core_mut()
-        .apply_chain_event(ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
-            domain_id: DomainId([DEFAULT_DOMAIN; 32]),
-            handle_key: derived,
-            operation_code: OperationCode::Add,
-            output_handle_type: HandleType::Suint256,
-            input_handle_keys: vec![a, b],
-            event_ref: event_ref(2, 1),
-        }));
+    let outcome =
+        host.handle_graph_core_mut()
+            .apply_chain_event(ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
+                domain_id: DomainId([DEFAULT_DOMAIN; 32]),
+                handle_key: derived,
+                operation_code: OperationCode::Add,
+                output_handle_type: HandleType::Suint256,
+                input_handle_keys: vec![a, b],
+                event_ref: event_ref(2, 1),
+            }));
     assert!(matches!(outcome, IngestionOutcome::Recorded(_)));
     (a, b, derived)
 }
