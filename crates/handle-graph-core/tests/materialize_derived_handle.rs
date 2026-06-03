@@ -13,9 +13,9 @@
 
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
-    HandleGraphCore, HandleId, HandleKey, HandleState, HandleType, ImportedHandle,
-    InMemoryHandlePersistence, IngestionOutcome, MaterializationReceipt, MaterializeDerivedError,
-    OperationCode, SystemCiphertextV1,
+    HandleGraphCore, HandleId, HandleKey, HandlePersistence, HandleState, HandleType,
+    ImportedHandle, InMemoryHandlePersistence, IngestionOutcome, MaterializationReceipt,
+    MaterializeDerivedError, OperationCode, SystemCiphertextV1,
 };
 
 const DEFAULT_CHAIN: u64 = 1;
@@ -99,6 +99,51 @@ fn materialize_tombstoned_handle_returns_error() {
         .expect_err("tombstoned handle must return MaterializeDerivedError");
 
     assert_eq!(err, MaterializeDerivedError::Tombstoned);
+}
+
+#[test]
+fn materialize_non_canonical_handle_returns_error_without_mutation() {
+    let mut core = HandleGraphCore::new();
+    let mut store = InMemoryHandlePersistence::new();
+    let (a, b) = seed_suint_pair(&mut core);
+    let derived = handle_key(10);
+    let recorded = expect_recorded(core.apply_chain_event(ChainEvent::DerivedHandleOperation(
+        DerivedHandleOperation {
+            domain_id: DomainId([DEFAULT_DOMAIN; 32]),
+            handle_key: derived,
+            operation_code: OperationCode::Add,
+            output_handle_type: HandleType::Suint256,
+            input_handle_keys: vec![a, b],
+            event_ref: event_ref(2, 1),
+        },
+    )));
+    let mut non_canonical = recorded;
+    non_canonical.is_canonical = false;
+    store.put_handle_record(non_canonical);
+
+    let mut restored = HandleGraphCore::restore_from_persistence(&store);
+    assert!(
+        restored.canonical_handle(&derived).is_none(),
+        "non-canonical records must be hidden from canonical reads"
+    );
+
+    let err = restored
+        .materialize_derived_handle(
+            &derived,
+            SystemCiphertextV1(vec![0xAA]),
+            MaterializationReceipt(vec![0xBB]),
+        )
+        .expect_err("non-canonical handle must return MaterializeDerivedError");
+
+    assert_eq!(err, MaterializeDerivedError::NotCanonical);
+    let audit = restored
+        .handle_record_for_audit(&derived)
+        .expect("non-canonical record remains audit-visible");
+    assert_eq!(
+        audit.state,
+        HandleState::Pending,
+        "state must not mutate on rejected materialization"
+    );
 }
 
 #[test]
@@ -285,6 +330,13 @@ fn ingest_derived(
         matches!(outcome, IngestionOutcome::Recorded(_)),
         "derived handle must be recorded"
     );
+}
+
+fn expect_recorded(outcome: IngestionOutcome) -> coprocessor_handle_graph_core::HandleRecord {
+    match outcome {
+        IngestionOutcome::Recorded(record) => record,
+        other => panic!("expected Recorded outcome, got {other:?}"),
+    }
 }
 
 fn imported_event(

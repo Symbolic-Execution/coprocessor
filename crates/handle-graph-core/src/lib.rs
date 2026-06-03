@@ -203,6 +203,8 @@ pub struct OrphanDiscardOutcome {
 pub enum MaterializeDerivedError {
     /// No Handle Record exists for the given Handle Key.
     UnknownHandle,
+    /// The Handle Record exists but is not canonical.
+    NotCanonical,
     /// The Handle Record exists but has been tombstoned by Orphan Discard.
     Tombstoned,
     /// The Handle Record's lineage is Source, not Derived. Only Derived
@@ -335,12 +337,13 @@ impl HandleGraphCore {
     }
 
     /// Returns the canonical Handle Record for `handle_key`. Tombstoned
-    /// records (see [`HandleGraphCore::apply_orphan_discard`]) are hidden from
-    /// this query and appear unknown to normal API behavior.
+    /// records (see [`HandleGraphCore::apply_orphan_discard`]) and
+    /// non-canonical records are hidden from this query and appear unknown to
+    /// normal API behavior.
     pub fn canonical_handle(&self, handle_key: &HandleKey) -> Option<&HandleRecord> {
         self.records
             .get(handle_key)
-            .filter(|record| !record.is_tombstoned)
+            .filter(|record| record.is_canonical && !record.is_tombstoned)
     }
 
     /// Returns any retained Handle Record, including tombstoned records. This
@@ -476,9 +479,9 @@ impl HandleGraphCore {
     /// enforced here and nowhere else.
     ///
     /// Returns the updated [`HandleRecord`] on success. Returns a typed
-    /// [`MaterializeDerivedError`] when the handle key is unknown, tombstoned,
-    /// not Derived-lineage, or not in the Pending state. On error the record
-    /// is left unchanged.
+    /// [`MaterializeDerivedError`] when the handle key is unknown,
+    /// non-canonical, tombstoned, not Derived-lineage, or not in the Pending
+    /// state. On error the record is left unchanged.
     pub fn materialize_derived_handle(
         &mut self,
         handle_key: &HandleKey,
@@ -489,6 +492,10 @@ impl HandleGraphCore {
             .records
             .get_mut(handle_key)
             .ok_or(MaterializeDerivedError::UnknownHandle)?;
+
+        if !record.is_canonical {
+            return Err(MaterializeDerivedError::NotCanonical);
+        }
 
         if record.is_tombstoned {
             return Err(MaterializeDerivedError::Tombstoned);

@@ -108,6 +108,12 @@ fn full_path_pending_derived_handle_resolves_to_ready() {
         "get_handle_state must return Ready, got {state_view:?}"
     );
 
+    let resolve_view = host.resolve_handle(coprocessor_host::RequestId([0x44; 32]), &derived);
+    assert!(
+        matches!(resolve_view, HandleStateView::Ready { .. }),
+        "resolve_handle must return Ready, got {resolve_view:?}"
+    );
+
     // Assert claim is released
     assert!(
         !host.is_resolution_task_claimed(&derived),
