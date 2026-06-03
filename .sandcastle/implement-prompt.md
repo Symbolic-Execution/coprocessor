@@ -8,6 +8,17 @@ Only work on the issue specified.
 
 Work on branch {{BRANCH}}. Make commits and run tests.
 
+# IMPLEMENTATION BRIEF
+
+The planner prepared this brief. Treat it as your execution contract unless it
+conflicts with the issue body, parent PRD, repository instructions, or sibling
+spec. If it conflicts, follow the higher-authority source and call out the
+reason in the commit message.
+
+<implementation-brief>
+{{IMPLEMENTATION_BRIEF}}
+</implementation-brief>
+
 # CONTEXT
 
 Here are the last 10 commits:
@@ -23,6 +34,9 @@ Here are the last 10 commits:
 Explore the repo and fill your context window with relevant information that will allow you to complete the task.
 
 Pay extra attention to test files that touch the relevant parts of the code.
+Before coding, reconcile the issue, parent PRD if present, sibling spec, and
+implementation brief into a short checklist for yourself. Use the brief to
+avoid re-deciding architecture that the planner already made explicit.
 
 # EXECUTION
 
@@ -32,6 +46,10 @@ If applicable, use RGR to complete the task.
 2. GREEN: write the implementation to pass that test
 3. REPEAT until done
 4. REFACTOR the code
+
+Stay inside the brief's non-goals. If an escalation trigger fires, do not guess:
+leave a concise issue comment explaining the blocker and avoid partial commits
+unless they are independently correct and useful.
 
 # FEEDBACK LOOPS
 

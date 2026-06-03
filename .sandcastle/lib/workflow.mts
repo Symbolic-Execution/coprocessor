@@ -16,6 +16,7 @@ import type {
   GithubClient,
   GithubConfig,
   GithubIssue,
+  ImplementationBrief,
   PlannedIssue,
 } from "./github-client.mts";
 import {
@@ -56,13 +57,28 @@ const copyToWorktree = ["node_modules"];
 const MAX_SYNC_REVIEW_PASSES = 3;
 const RESOLVER_IDLE_TIMEOUT_SECONDS = 1800;
 const plannerAgent = claudeAgent("claude-opus-4-8");
-const implementerAgent = claudeAgent("claude-opus-4-7");
-const resolverAgent = claudeAgent("claude-opus-4-8");
+const implementerAgent = claudeAgent("claude-sonnet-4-6");
+const resolverAgent = claudeAgent("claude-sonnet-4-6");
 const reviewerAgent = codexAgent("gpt-5.5", { effort: "high" });
+
+const implementationBriefSchema = z.object({
+  intent: z.string(),
+  nonGoals: z.array(z.string()).default([]),
+  designDecisions: z.array(z.string()).default([]),
+  filesLikelyTouched: z.array(z.string()).default([]),
+  testsRequired: z.array(z.string()).default([]),
+  securityPrivacyChecks: z.array(z.string()).default([]),
+  escalationTriggers: z.array(z.string()).default([]),
+});
 
 const planSchema = z.object({
   issues: z.array(
-    z.object({ id: z.string(), title: z.string(), branch: z.string() }),
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      branch: z.string(),
+      implementationBrief: implementationBriefSchema,
+    }),
   ),
 });
 type PlannedIssueOutput = z.infer<typeof planSchema>["issues"][number];
@@ -107,7 +123,11 @@ export async function planIssues(
       );
     }
 
-    return { ...issue, branch: planned.branch };
+    return {
+      ...issue,
+      branch: planned.branch,
+      implementationBrief: planned.implementationBrief,
+    };
   });
 }
 
@@ -119,6 +139,9 @@ export async function runIssueWorkflow(options: {
   codexHome: string;
 }) {
   const { issue, github, githubClient, defaultBranch, codexHome } = options;
+  const implementationBrief = formatImplementationBrief(
+    issue.implementationBrief,
+  );
   await repairManagedWorktreeSubmodules(issue.branch);
 
   const sandbox = await sandcastle.createSandbox({
@@ -153,6 +176,7 @@ export async function runIssueWorkflow(options: {
         TASK_ID: issue.id,
         ISSUE_TITLE: issue.title,
         BRANCH: issue.branch,
+        IMPLEMENTATION_BRIEF: implementationBrief,
       },
     });
 
@@ -198,6 +222,7 @@ export async function runIssueWorkflow(options: {
       const cachedReview = await readCachedApprovedReview(
         issue.branch,
         headShaBeforeReview,
+        implementationBrief,
       );
 
       if (cachedReview) {
@@ -213,6 +238,7 @@ export async function runIssueWorkflow(options: {
           promptFile: "./.sandcastle/review-prompt.md",
           promptArgs: {
             BRANCH: issue.branch,
+            IMPLEMENTATION_BRIEF: implementationBrief,
           },
         });
 
@@ -225,6 +251,7 @@ export async function runIssueWorkflow(options: {
       await writeCachedReview(
         issue.branch,
         await branchHeadSha(issue.branch),
+        implementationBrief,
         review,
       );
 
@@ -403,6 +430,9 @@ async function syncIssueBranchWithDefault(options: {
         BRANCH: issue.branch,
         DEFAULT_BRANCH: defaultBranch,
         CONFLICTED_FILES: conflicts.join("\n"),
+        IMPLEMENTATION_BRIEF: formatImplementationBrief(
+          issue.implementationBrief,
+        ),
       },
     });
 
@@ -463,7 +493,9 @@ async function hasMergeInProgress(worktreePath: string) {
 }
 
 async function worktreeHeadSha(worktreePath: string) {
-  return (await git(["rev-parse", "HEAD"], { cwd: worktreePath })).stdout.trim();
+  return (
+    await git(["rev-parse", "HEAD"], { cwd: worktreePath })
+  ).stdout.trim();
 }
 
 async function runQualityGates(
@@ -537,4 +569,43 @@ async function branchHeadSha(branch: string) {
 
 function branchForIssue(id: string) {
   return `sandcastle/issue-${id}`;
+}
+
+function formatImplementationBrief(brief: ImplementationBrief) {
+  return [
+    "## Intent",
+    brief.intent.trim() || "Use the issue body as the source of truth.",
+    "",
+    "## Non-goals",
+    bulletList(brief.nonGoals),
+    "",
+    "## Design decisions",
+    bulletList(brief.designDecisions),
+    "",
+    "## Files likely touched",
+    bulletList(brief.filesLikelyTouched),
+    "",
+    "## Tests required",
+    bulletList(brief.testsRequired),
+    "",
+    "## Security/privacy checks",
+    bulletList(brief.securityPrivacyChecks),
+    "",
+    "## Escalation triggers",
+    bulletList(brief.escalationTriggers),
+  ].join("\n");
+}
+
+function bulletList(items: string[]) {
+  const presentItems = items
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+
+  if (presentItems.length === 0) {
+    return "- None";
+  }
+
+  return presentItems
+    .map((item) => `- ${item.replace(/\n/g, "\n  ")}`)
+    .join("\n");
 }
