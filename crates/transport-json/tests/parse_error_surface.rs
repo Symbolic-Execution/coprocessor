@@ -100,6 +100,15 @@ fn base64_with_non_zero_tail_bits_is_rejected() {
 }
 
 #[test]
+fn base64_string_with_json_escape_is_rejected() {
+    let err = decode_system_ciphertext("\"AA\\u003d\\u003d\"").unwrap_err();
+    assert!(matches!(
+        err,
+        CiphertextJsonError::Json(JsonParseError::UnsupportedStringEscape)
+    ));
+}
+
+#[test]
 fn empty_string_envelope_is_rejected_as_envelope_error() {
     // Empty string is a valid JSON string and valid (empty) base64, so the
     // failure surfaces as an envelope decode error.

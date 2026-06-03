@@ -246,20 +246,34 @@ fn duplicate_field_uses_serde_struct_behavior_without_duplicate_field_variant() 
 }
 
 #[test]
-fn escape_sequence_in_hex_field_is_rejected_as_invalid_hex() {
-    // serde_json decodes \u0000 to the null character, so the field value
-    // "0x\u{0}" passes JSON parsing but fails hex validation. The error
-    // surfaces as InvalidHex rather than UnsupportedStringEscape (a
-    // hand-rolled-parser-specific variant).
-    let json = "{\"chain_id\":1,\"block_number\":1,\"block_hash\":\"0x\\u0000\",\"tx_hash\":\"0x00\",\"log_index\":1}";
-    let err = decode_chain_event_ref(json).unwrap_err();
-    assert!(matches!(
-        err,
-        JsonParseError::InvalidHex {
-            field: "block_hash",
-            ..
-        }
-    ));
+fn escape_sequence_in_hex_field_is_rejected_before_hex_validation() {
+    let baseline = sample_chain_event_ref();
+    let escaped_valid_hex = format!("0x\\u0061{}", "a".repeat(63));
+    let json = format!(
+        "{{\"chain_id\":{},\"block_number\":{},\"block_hash\":\"{}\",\"tx_hash\":\"{}\",\"log_index\":{}}}",
+        baseline.chain_id.0,
+        baseline.block_number,
+        escaped_valid_hex,
+        hex(&baseline.tx_hash),
+        baseline.log_index,
+    );
+    let err = decode_chain_event_ref(&json).unwrap_err();
+    assert!(matches!(err, JsonParseError::UnsupportedStringEscape));
+}
+
+#[test]
+fn escape_sequence_in_object_key_is_rejected() {
+    let baseline = sample_chain_event_ref();
+    let json = format!(
+        "{{\"chain\\u005fid\":{},\"block_number\":{},\"block_hash\":\"{}\",\"tx_hash\":\"{}\",\"log_index\":{}}}",
+        baseline.chain_id.0,
+        baseline.block_number,
+        hex(&baseline.block_hash),
+        hex(&baseline.tx_hash),
+        baseline.log_index,
+    );
+    let err = decode_chain_event_ref(&json).unwrap_err();
+    assert!(matches!(err, JsonParseError::UnsupportedStringEscape));
 }
 
 fn hex(bytes: &[u8; 32]) -> String {

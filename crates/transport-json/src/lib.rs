@@ -242,11 +242,25 @@ pub fn encode_chain_event_ref(value: &ChainEventRef) -> String {
 }
 
 pub fn decode_chain_event_ref(text: &str) -> Result<ChainEventRef, JsonParseError> {
+    reject_json_string_escape(text)?;
     let mut de = serde_json::Deserializer::from_str(text);
     let value: ChainEventRefDto =
         serde::de::Deserialize::deserialize(&mut de).map_err(map_serde_json_to_parse_error)?;
     de.end().map_err(|_| JsonParseError::TrailingContent)?;
     Ok(value.into())
+}
+
+fn reject_json_string_escape(text: &str) -> Result<(), JsonParseError> {
+    let mut in_string = false;
+    for byte in text.bytes() {
+        match (in_string, byte) {
+            (false, b'"') => in_string = true,
+            (true, b'"') => in_string = false,
+            (true, b'\\') => return Err(JsonParseError::UnsupportedStringEscape),
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Map a serde_json parse error to a sanitized [`JsonParseError`] variant.
@@ -551,6 +565,7 @@ fn decode_envelope_bytes(text: &str) -> Result<Vec<u8>, CiphertextJsonError> {
     // rather than being swallowed by a combined parse-and-end call.
     // The serde_json error message is discarded — it can contain the offending
     // token, which for base64/ciphertext fields would leak payload bytes.
+    reject_json_string_escape(text)?;
     let mut de = serde_json::Deserializer::from_str(text);
     let base64_text: String = serde::de::Deserialize::deserialize(&mut de).map_err(|_| {
         CiphertextJsonError::Json(JsonParseError::UnexpectedToken { expected: "string" })
