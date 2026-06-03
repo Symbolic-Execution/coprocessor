@@ -88,9 +88,23 @@ fn top_level_array_is_rejected_with_unexpected_token() {
 }
 
 #[test]
+fn top_level_string_with_escape_is_rejected_as_wrong_shape() {
+    let err = decode_chain_event_ref("\"not\\u002dan\\u002dobject\"").unwrap_err();
+    assert!(matches!(
+        err,
+        JsonParseError::UnexpectedToken { expected: "object" }
+    ));
+}
+
+#[test]
 fn missing_field_is_rejected_with_specific_field_name() {
-    let json = "{\"chain_id\":1,\"block_number\":2,\"block_hash\":\"0x00\",\"tx_hash\":\"0x00\"}";
-    let err = decode_chain_event_ref(json).unwrap_err();
+    let baseline = sample_chain_event_ref();
+    let json = format!(
+        "{{\"chain_id\":1,\"block_number\":2,\"block_hash\":\"{}\",\"tx_hash\":\"{}\"}}",
+        hex(&baseline.block_hash),
+        hex(&baseline.tx_hash),
+    );
+    let err = decode_chain_event_ref(&json).unwrap_err();
     assert!(matches!(
         err,
         JsonParseError::MissingField { field: "log_index" }
@@ -121,6 +135,26 @@ fn wrong_field_shape_is_rejected_with_expected_kind() {
         JsonParseError::FieldShape {
             field: "chain_id",
             expected: "unsigned integer",
+        }
+    ));
+}
+
+#[test]
+fn bytes32_field_with_wrong_shape_keeps_field_specific_error() {
+    let baseline = sample_chain_event_ref();
+    let json = format!(
+        "{{\"chain_id\":{},\"block_number\":{},\"block_hash\":1,\"tx_hash\":\"{}\",\"log_index\":{}}}",
+        baseline.chain_id.0,
+        baseline.block_number,
+        hex(&baseline.tx_hash),
+        baseline.log_index,
+    );
+    let err = decode_chain_event_ref(&json).unwrap_err();
+    assert!(matches!(
+        err,
+        JsonParseError::FieldShape {
+            field: "block_hash",
+            expected: "string",
         }
     ));
 }
@@ -188,25 +222,24 @@ fn maximum_u64_chain_id_round_trips() {
 
 #[test]
 fn signed_or_decimal_number_is_rejected_with_invalid_unsigned_number() {
+    // serde_json parses -1 as a valid JSON Number, so rejection happens at
+    // the u64 conversion step rather than at the field-shape level.
     let json = "{\"chain_id\":-1,\"block_number\":1,\"block_hash\":\"0x00\",\"tx_hash\":\"0x00\",\"log_index\":1}";
-    let err = decode_chain_event_ref(json).unwrap_err();
-    assert!(matches!(
-        err,
-        JsonParseError::FieldShape {
-            field: "chain_id",
-            expected: "string or unsigned integer",
-        }
-    ));
-}
-
-#[test]
-fn leading_zero_number_is_rejected_with_invalid_unsigned_number() {
-    let json = "{\"chain_id\":01,\"block_number\":1,\"block_hash\":\"0x00\",\"tx_hash\":\"0x00\",\"log_index\":1}";
     let err = decode_chain_event_ref(json).unwrap_err();
     assert!(matches!(
         err,
         JsonParseError::InvalidUnsignedNumber { field: "chain_id" }
     ));
+}
+
+#[test]
+fn leading_zero_number_is_rejected() {
+    // serde_json rejects leading zeros at the JSON syntax level (per the JSON
+    // spec), so the error surfaces as UnexpectedToken rather than the
+    // field-specific InvalidUnsignedNumber the hand-rolled parser produced.
+    let json = "{\"chain_id\":01,\"block_number\":1,\"block_hash\":\"0x00\",\"tx_hash\":\"0x00\",\"log_index\":1}";
+    let err = decode_chain_event_ref(json).unwrap_err();
+    assert!(matches!(err, JsonParseError::UnexpectedToken { .. }));
 }
 
 #[test]
@@ -218,11 +251,61 @@ fn trailing_content_after_object_is_rejected() {
 }
 
 #[test]
-fn duplicate_field_in_object_is_rejected() {
+fn trailing_escaped_string_after_object_is_rejected_as_trailing_content() {
     let baseline = sample_chain_event_ref();
+    let json = format!(
+        "{} \"trailing\\u002dcontent\"",
+        encode_chain_event_ref(&baseline)
+    );
+    let err = decode_chain_event_ref(&json).unwrap_err();
+    assert!(matches!(err, JsonParseError::TrailingContent));
+}
+
+#[test]
+fn duplicate_field_uses_serde_struct_behavior_without_duplicate_field_variant() {
+    // Serde's struct deserializer rejects duplicate keys. The transport no
+    // longer exposes the hand-rolled DuplicateField variant on this path.
+    let baseline = sample_chain_event_ref();
+    let different_chain_id = baseline.chain_id.0 + 1;
     let json = format!(
         "{{\"chain_id\":{},\"chain_id\":{},\"block_number\":{},\"block_hash\":\"{}\",\"tx_hash\":\"{}\",\"log_index\":{}}}",
         baseline.chain_id.0,
+        different_chain_id,
+        baseline.block_number,
+        hex(&baseline.block_hash),
+        hex(&baseline.tx_hash),
+        baseline.log_index,
+    );
+    let err = decode_chain_event_ref(&json).unwrap_err();
+    assert!(matches!(
+        err,
+        JsonParseError::UnexpectedToken {
+            expected: "unique field"
+        }
+    ));
+}
+
+#[test]
+fn escape_sequence_in_hex_field_is_rejected_before_hex_validation() {
+    let baseline = sample_chain_event_ref();
+    let escaped_valid_hex = format!("0x\\u0061{}", "a".repeat(63));
+    let json = format!(
+        "{{\"chain_id\":{},\"block_number\":{},\"block_hash\":\"{}\",\"tx_hash\":\"{}\",\"log_index\":{}}}",
+        baseline.chain_id.0,
+        baseline.block_number,
+        escaped_valid_hex,
+        hex(&baseline.tx_hash),
+        baseline.log_index,
+    );
+    let err = decode_chain_event_ref(&json).unwrap_err();
+    assert!(matches!(err, JsonParseError::UnsupportedStringEscape));
+}
+
+#[test]
+fn escape_sequence_in_object_key_is_rejected() {
+    let baseline = sample_chain_event_ref();
+    let json = format!(
+        "{{\"chain\\u005fid\":{},\"block_number\":{},\"block_hash\":\"{}\",\"tx_hash\":\"{}\",\"log_index\":{}}}",
         baseline.chain_id.0,
         baseline.block_number,
         hex(&baseline.block_hash),
@@ -230,13 +313,6 @@ fn duplicate_field_in_object_is_rejected() {
         baseline.log_index,
     );
     let err = decode_chain_event_ref(&json).unwrap_err();
-    assert!(matches!(err, JsonParseError::DuplicateField { .. }));
-}
-
-#[test]
-fn escape_sequence_in_string_value_is_rejected() {
-    let json = "{\"chain_id\":1,\"block_number\":1,\"block_hash\":\"0x\\u0000\",\"tx_hash\":\"0x00\",\"log_index\":1}";
-    let err = decode_chain_event_ref(json).unwrap_err();
     assert!(matches!(err, JsonParseError::UnsupportedStringEscape));
 }
 
