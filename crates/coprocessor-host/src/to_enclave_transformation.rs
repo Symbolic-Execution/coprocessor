@@ -41,7 +41,7 @@ use coprocessor_mpc_client::{
     request_to_enclave_transformation, MpcToEnclaveSource, ToEnclaveTransformationError,
     ToEnclaveTransformationRequest,
 };
-use coprocessor_nitro_enclave::EnclaveAttestationMaterial;
+use coprocessor_nitro_enclave::{EnclaveAttestationError, EnclaveAttestationSource};
 
 use crate::resolution_scheduler::ResolutionTask;
 
@@ -50,6 +50,17 @@ use crate::resolution_scheduler::ResolutionTask;
 /// the corresponding input Handle Key without re-walking the task.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TransformResolutionInputsError {
+    /// The task's input Handle Keys and input ciphertexts are not
+    /// index-aligned. Scheduler-built tasks should never hit this; the check
+    /// protects the public host method from externally constructed malformed
+    /// tasks.
+    TaskInputLengthMismatch {
+        handle_key_count: usize,
+        system_ciphertext_count: usize,
+    },
+    /// The Enclave attestation seam could not provide the task-scoped
+    /// material MPC must validate before transforming any input.
+    EnclaveAttestationUnavailable { error: EnclaveAttestationError },
     /// The input `SystemCiphertextV1` bytes at `input_index` could not be
     /// decoded as a canonical envelope. The host treats this as an upstream
     /// ingestion problem rather than an MPC failure.
@@ -72,20 +83,31 @@ pub enum TransformResolutionInputsError {
 /// [`EnclaveCiphertextV1`] by asking `mpc_source` for one To-Enclave
 /// Transformation per input.
 ///
-/// `task_request_id` is the RequestId every per-input transformation shares;
-/// it identifies the Resolution Task flow, not the Handle. `attestation`
-/// carries the Enclave public key, the approved Enclave Measurement, and the
-/// Attestation evidence MPC validates before transforming.
+/// The Enclave attestation material is fetched once per task and reused for
+/// every input, so all transformed inputs target the same Enclave key.
+/// `RequestId`s are derived deterministically from the output Handle Key and
+/// input index; they are correlation identifiers, not cryptographic
+/// authenticators.
 ///
 /// On success, the returned `Vec` is index-aligned with the task's input
 /// Handle Keys. On failure, the first failing input short-circuits the
 /// transformation and the error identifies that input's position.
 pub fn transform_resolution_task_inputs(
     task: &ResolutionTask,
-    task_request_id: RequestId,
-    attestation: &EnclaveAttestationMaterial,
     mpc_source: &dyn MpcToEnclaveSource,
+    attestation_source: &dyn EnclaveAttestationSource,
 ) -> Result<Vec<EnclaveCiphertextV1>, TransformResolutionInputsError> {
+    if task.input_handle_keys.len() != task.input_system_ciphertexts.len() {
+        return Err(TransformResolutionInputsError::TaskInputLengthMismatch {
+            handle_key_count: task.input_handle_keys.len(),
+            system_ciphertext_count: task.input_system_ciphertexts.len(),
+        });
+    }
+
+    let attestation = attestation_source
+        .current_attestation_material()
+        .map_err(|error| TransformResolutionInputsError::EnclaveAttestationUnavailable { error })?;
+
     let mut outputs = Vec::with_capacity(task.input_system_ciphertexts.len());
     for (input_index, (input_handle_key, system_ciphertext)) in task
         .input_handle_keys
@@ -93,11 +115,12 @@ pub fn transform_resolution_task_inputs(
         .zip(task.input_system_ciphertexts.iter())
         .enumerate()
     {
-        let envelope = EnvelopeSystemCiphertextV1::decode(&system_ciphertext.0).map_err(
-            |error| TransformResolutionInputsError::MalformedSystemCiphertext { input_index, error },
-        )?;
+        let envelope =
+            EnvelopeSystemCiphertextV1::decode(&system_ciphertext.0).map_err(|error| {
+                TransformResolutionInputsError::MalformedSystemCiphertext { input_index, error }
+            })?;
         let request = ToEnclaveTransformationRequest {
-            request_id: task_request_id,
+            request_id: request_id_for_task_input(task, input_index),
             chain_id: input_handle_key.chain_id,
             handle_id: HandleId(input_handle_key.handle_id.0),
             enclave_public_key: attestation.enclave_public_key.clone(),
@@ -105,10 +128,36 @@ pub fn transform_resolution_task_inputs(
             attestation: attestation.attestation.clone(),
             system_ciphertext: envelope,
         };
-        let enclave_ciphertext = request_to_enclave_transformation(mpc_source, &request).map_err(
-            |error| TransformResolutionInputsError::MpcTransformationFailed { input_index, error },
-        )?;
+        let enclave_ciphertext =
+            request_to_enclave_transformation(mpc_source, &request).map_err(|error| {
+                TransformResolutionInputsError::MpcTransformationFailed { input_index, error }
+            })?;
         outputs.push(enclave_ciphertext);
     }
     Ok(outputs)
+}
+
+fn request_id_for_task_input(task: &ResolutionTask, input_index: usize) -> RequestId {
+    let mut bytes = [0u8; 32];
+    let mut state = 0xcbf2_9ce4_8422_2325u64;
+
+    mix(&mut state, b"coprocessor-host:resolution-task-input:v1");
+    mix(&mut state, &task.output_handle_key.chain_id.0.to_be_bytes());
+    mix(&mut state, &task.output_handle_key.contract_address.0);
+    mix(&mut state, &task.output_handle_key.handle_id.0);
+    mix(&mut state, &(input_index as u64).to_be_bytes());
+
+    for chunk in bytes.chunks_mut(8) {
+        mix(&mut state, &[chunk.len() as u8]);
+        chunk.copy_from_slice(&state.to_be_bytes()[..chunk.len()]);
+    }
+
+    RequestId(bytes)
+}
+
+fn mix(state: &mut u64, bytes: &[u8]) {
+    for byte in bytes {
+        *state ^= u64::from(*byte);
+        *state = state.wrapping_mul(0x0000_0100_0000_01B3);
+    }
 }

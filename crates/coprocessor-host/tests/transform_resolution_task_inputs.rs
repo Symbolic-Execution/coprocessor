@@ -17,20 +17,23 @@
 use std::cell::RefCell;
 
 use coprocessor_ciphertext_binding::{
-    self as cbinding, EnclaveAadV1, EnclaveCiphertextV1, SystemCiphertextV1 as EnvelopeSystemCiphertextV1,
-    SystemHandleAadV1,
+    self as cbinding, EnclaveAadV1, EnclaveCiphertextV1,
+    SystemCiphertextV1 as EnvelopeSystemCiphertextV1, SystemHandleAadV1,
 };
 use coprocessor_handle_graph_core::{
     ChainId, ContractAddress, HandleId, HandleKey, HandleType, OperationCode, SystemCiphertextV1,
 };
 use coprocessor_host::{
-    transform_resolution_task_inputs, ResolutionTask, TransformResolutionInputsError,
+    CoprocessorHost, HostConfig, ResolutionTask, TransformResolutionInputsError,
 };
 use coprocessor_mpc_client::{
     MpcSourceError, MpcToEnclaveResponse, MpcToEnclaveSource, ToEnclaveTransformationError,
     ToEnclaveTransformationRequest,
 };
-use coprocessor_nitro_enclave::{AttestationDigest, EnclaveAttestationMaterial};
+use coprocessor_nitro_enclave::{
+    AttestationDigest, EnclaveAttestationError, EnclaveAttestationMaterial,
+    EnclaveAttestationSource, LocalEnclaveAttestationConfig, LocalEnclaveAttestationSource,
+};
 
 const DEFAULT_CHAIN: u64 = 1;
 const DEFAULT_CONTRACT_SEED: u8 = 7;
@@ -52,13 +55,12 @@ fn transform_returns_one_enclave_ciphertext_per_ordered_input_handle() {
         enclave_envelope_for(when_false, 0xC2),
     ]);
 
-    let outputs = transform_resolution_task_inputs(
-        &task,
-        cbinding::RequestId([TASK_REQUEST_ID_SEED; 32]),
-        &attestation_material(),
-        &server,
-    )
-    .expect("ordered transformation must succeed");
+    let host = host();
+    let attestation = local_attestation_source();
+
+    let outputs = host
+        .transform_resolution_task_inputs(&task, &server, &attestation)
+        .expect("ordered transformation must succeed");
 
     assert_eq!(
         outputs,
@@ -98,29 +100,80 @@ fn transform_forwards_task_scoped_request_facts_to_each_mpc_call() {
         enclave_envelope_for(a, 0xC0),
         enclave_envelope_for(b, 0xC1),
     ]);
-    let attestation = attestation_material();
-    let task_request_id = cbinding::RequestId([TASK_REQUEST_ID_SEED; 32]);
+    let host = host();
+    let attestation = local_attestation_source();
 
-    let _ = transform_resolution_task_inputs(&task, task_request_id, &attestation, &server)
+    let _ = host
+        .transform_resolution_task_inputs(&task, &server, &attestation)
         .expect("transformation must succeed");
 
     let requests = server.observed_requests();
+    assert_ne!(
+        requests[0].request_id, requests[1].request_id,
+        "each input transformation must have a deterministic per-input RequestId",
+    );
     for (index, request) in requests.iter().enumerate() {
-        assert_eq!(
-            request.request_id, task_request_id,
-            "every input transformation in a task shares the task RequestId",
-        );
         assert_eq!(request.chain_id, ChainId(DEFAULT_CHAIN));
-        assert_eq!(request.enclave_public_key, attestation.enclave_public_key);
-        assert_eq!(request.enclave_measurement, attestation.enclave_measurement);
-        assert_eq!(request.attestation, attestation.attestation);
+        assert_eq!(
+            request.enclave_public_key,
+            attestation_material().enclave_public_key
+        );
+        assert_eq!(
+            request.enclave_measurement,
+            attestation_material().enclave_measurement
+        );
+        assert_eq!(request.attestation, attestation_material().attestation);
         let expected_input = if index == 0 { a } else { b };
-        assert_eq!(request.handle_id, cbinding::HandleId(expected_input.handle_id.0));
+        assert_eq!(
+            request.handle_id,
+            cbinding::HandleId(expected_input.handle_id.0)
+        );
         let expected_envelope =
             EnvelopeSystemCiphertextV1::decode(&task.input_system_ciphertexts[index].0)
                 .expect("test fixture envelope must decode");
         assert_eq!(request.system_ciphertext, expected_envelope);
     }
+}
+
+#[test]
+fn transform_derives_stable_request_ids_for_the_same_claimed_task() {
+    let a = handle_key(1);
+    let b = handle_key(2);
+    let task = add_task(handle_key(10), a, b);
+
+    let server = ProgrammableMpcServer::with_successes(vec![
+        enclave_envelope_for(a, 0xC0),
+        enclave_envelope_for(b, 0xC1),
+    ]);
+    let host = host();
+    let attestation = local_attestation_source();
+
+    let _ = host
+        .transform_resolution_task_inputs(&task, &server, &attestation)
+        .expect("first transformation must succeed");
+    let first_request_ids: Vec<_> = server
+        .observed_requests()
+        .iter()
+        .map(|request| request.request_id)
+        .collect();
+
+    server.queue_successes(vec![
+        enclave_envelope_for(a, 0xC0),
+        enclave_envelope_for(b, 0xC1),
+    ]);
+    let _ = host
+        .transform_resolution_task_inputs(&task, &server, &attestation)
+        .expect("second transformation must succeed");
+    let all_requests = server.observed_requests();
+    let second_request_ids: Vec<_> = all_requests[2..]
+        .iter()
+        .map(|request| request.request_id)
+        .collect();
+
+    assert_eq!(
+        second_request_ids, first_request_ids,
+        "the same claimed task must derive stable per-input RequestIds",
+    );
 }
 
 #[test]
@@ -134,13 +187,12 @@ fn transform_short_circuits_on_first_mpc_failure_and_reports_input_index() {
         FakeMpcOutcome::Response(MpcToEnclaveResponse::Unauthorized),
     ]);
 
-    let err = transform_resolution_task_inputs(
-        &task,
-        cbinding::RequestId([TASK_REQUEST_ID_SEED; 32]),
-        &attestation_material(),
-        &server,
-    )
-    .expect_err("an MPC failure on any input must fail the whole transformation");
+    let host = host();
+    let attestation = local_attestation_source();
+
+    let err = host
+        .transform_resolution_task_inputs(&task, &server, &attestation)
+        .expect_err("an MPC failure on any input must fail the whole transformation");
 
     assert_eq!(
         err,
@@ -168,13 +220,12 @@ fn transform_surfaces_transport_unavailable_with_detail() {
         },
     )]);
 
-    let err = transform_resolution_task_inputs(
-        &task,
-        cbinding::RequestId([TASK_REQUEST_ID_SEED; 32]),
-        &attestation_material(),
-        &server,
-    )
-    .expect_err("transport failures must short-circuit the transformation");
+    let host = host();
+    let attestation = local_attestation_source();
+
+    let err = host
+        .transform_resolution_task_inputs(&task, &server, &attestation)
+        .expect_err("transport failures must short-circuit the transformation");
 
     assert_eq!(
         err,
@@ -188,6 +239,41 @@ fn transform_surfaces_transport_unavailable_with_detail() {
 }
 
 #[test]
+fn transform_fails_before_mpc_when_attestation_material_is_unavailable() {
+    let a = handle_key(1);
+    let b = handle_key(2);
+    let task = add_task(handle_key(10), a, b);
+
+    let server = ProgrammableMpcServer::with_successes(vec![
+        enclave_envelope_for(a, 0xC0),
+        enclave_envelope_for(b, 0xC1),
+    ]);
+    let host = host();
+    let attestation = FailingAttestationSource {
+        error: EnclaveAttestationError::BackendUnavailable {
+            detail: "local attestation socket unavailable".to_string(),
+        },
+    };
+
+    let err = host
+        .transform_resolution_task_inputs(&task, &server, &attestation)
+        .expect_err("attestation failures must fail the whole transformation");
+
+    assert_eq!(
+        err,
+        TransformResolutionInputsError::EnclaveAttestationUnavailable {
+            error: EnclaveAttestationError::BackendUnavailable {
+                detail: "local attestation socket unavailable".to_string(),
+            },
+        },
+    );
+    assert!(
+        server.observed_requests().is_empty(),
+        "MPC must not be called without task-scoped Enclave attestation material",
+    );
+}
+
+#[test]
 fn transform_returns_decode_error_for_malformed_input_system_ciphertext() {
     let a = handle_key(1);
     let b = handle_key(2);
@@ -196,13 +282,12 @@ fn transform_returns_decode_error_for_malformed_input_system_ciphertext() {
 
     let server = ProgrammableMpcServer::with_successes(vec![enclave_envelope_for(a, 0xC0)]);
 
-    let err = transform_resolution_task_inputs(
-        &task,
-        cbinding::RequestId([TASK_REQUEST_ID_SEED; 32]),
-        &attestation_material(),
-        &server,
-    )
-    .expect_err("malformed input envelope must fail the transformation");
+    let host = host();
+    let attestation = local_attestation_source();
+
+    let err = host
+        .transform_resolution_task_inputs(&task, &server, &attestation)
+        .expect_err("malformed input envelope must fail the transformation");
 
     match err {
         TransformResolutionInputsError::MalformedSystemCiphertext { input_index, .. } => {
@@ -228,8 +313,8 @@ fn transform_is_pure_and_does_not_retain_enclave_ciphertexts_after_drop() {
     let a = handle_key(1);
     let b = handle_key(2);
     let task = add_task(handle_key(10), a, b);
-    let request_id = cbinding::RequestId([TASK_REQUEST_ID_SEED; 32]);
-    let attestation = attestation_material();
+    let host = host();
+    let attestation = local_attestation_source();
 
     let server = ProgrammableMpcServer::with_successes(vec![
         enclave_envelope_for(a, 0xC0),
@@ -237,8 +322,9 @@ fn transform_is_pure_and_does_not_retain_enclave_ciphertexts_after_drop() {
     ]);
 
     {
-        let outputs =
-            transform_resolution_task_inputs(&task, request_id, &attestation, &server).unwrap();
+        let outputs = host
+            .transform_resolution_task_inputs(&task, &server, &attestation)
+            .unwrap();
         assert_eq!(outputs.len(), 2);
         // outputs goes out of scope here; the function owns no state to
         // resurrect them later.
@@ -250,7 +336,9 @@ fn transform_is_pure_and_does_not_retain_enclave_ciphertexts_after_drop() {
         enclave_envelope_for(a, 0xC0),
         enclave_envelope_for(b, 0xC1),
     ]);
-    let _ = transform_resolution_task_inputs(&task, request_id, &attestation, &server).unwrap();
+    let _ = host
+        .transform_resolution_task_inputs(&task, &server, &attestation)
+        .unwrap();
 
     assert_eq!(
         server.observed_requests().len(),
@@ -339,6 +427,21 @@ fn attestation_material() -> EnclaveAttestationMaterial {
     }
 }
 
+fn local_attestation_source() -> LocalEnclaveAttestationSource {
+    let material = attestation_material();
+    LocalEnclaveAttestationSource::new(LocalEnclaveAttestationConfig {
+        enclave_public_key: material.enclave_public_key,
+        enclave_measurement: material.enclave_measurement,
+        attestation: material.attestation,
+    })
+}
+
+fn host() -> CoprocessorHost {
+    let mut host = CoprocessorHost::new(HostConfig::for_local_development());
+    host.start().unwrap();
+    host
+}
+
 fn handle_key(seed: u8) -> HandleKey {
     HandleKey {
         chain_id: ChainId(DEFAULT_CHAIN),
@@ -406,5 +509,17 @@ impl MpcToEnclaveSource for ProgrammableMpcServer {
             FakeMpcOutcome::Response(response) => Ok(response),
             FakeMpcOutcome::SourceError(error) => Err(error),
         }
+    }
+}
+
+struct FailingAttestationSource {
+    error: EnclaveAttestationError,
+}
+
+impl EnclaveAttestationSource for FailingAttestationSource {
+    fn current_attestation_material(
+        &self,
+    ) -> Result<EnclaveAttestationMaterial, EnclaveAttestationError> {
+        Err(self.error.clone())
     }
 }

@@ -16,6 +16,8 @@ use std::collections::BTreeSet;
 use coprocessor_handle_graph_core::{
     HandleGraphCore, HandleKey, HandlePersistence, PlaintextMaterializer,
 };
+use coprocessor_mpc_client::{EnclaveCiphertextV1, MpcToEnclaveSource};
+use coprocessor_nitro_enclave::EnclaveAttestationSource;
 
 mod internal_api;
 
@@ -366,6 +368,21 @@ impl CoprocessorHost {
     pub fn claim_resolution_tasks(&mut self) -> Vec<ResolutionTask> {
         self.resolution_claims
             .claim_from_readiness(&self.handle_graph_core)
+    }
+
+    /// Transform a claimed Resolution Task's ordered input
+    /// `SystemCiphertextV1` values into task-scoped `EnclaveCiphertextV1`
+    /// values. This is the MPC boundary between scheduler claim and Enclave
+    /// execution: the host obtains one Enclave attestation target for the
+    /// task, asks MPC to transform each input ciphertext in order, and
+    /// returns the transformed inputs without storing them in host state.
+    pub fn transform_resolution_task_inputs(
+        &self,
+        task: &ResolutionTask,
+        mpc_source: &dyn MpcToEnclaveSource,
+        attestation_source: &dyn EnclaveAttestationSource,
+    ) -> Result<Vec<EnclaveCiphertextV1>, TransformResolutionInputsError> {
+        transform_resolution_task_inputs(task, mpc_source, attestation_source)
     }
 
     /// True when a Resolution Task is currently claimed for `handle_key`.
