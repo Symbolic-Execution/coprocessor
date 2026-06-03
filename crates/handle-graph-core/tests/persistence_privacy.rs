@@ -14,7 +14,7 @@
 //! storage; this file locks that invariant with runtime assertions.
 
 use coprocessor_ciphertext_binding::{
-    self as cbinding, EnclaveCiphertextV1, EnclaveAadV1, AttestationDigest,
+    self as cbinding, AttestationDigest, EnclaveAadV1, EnclaveCiphertextV1,
 };
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
@@ -44,7 +44,13 @@ fn ready_source_handle_persists_exact_system_ciphertext_and_provenance() {
     let domain = DomainId(bytes32(DEFAULT_DOMAIN));
 
     let _ = expect_recorded(core.apply_chain_event_with_persistence(
-        imported_event(key, HandleType::Suint256, event_ref, ciphertext.clone(), receipt.clone()),
+        imported_event(
+            key,
+            HandleType::Suint256,
+            event_ref,
+            ciphertext.clone(),
+            receipt.clone(),
+        ),
         &mut store,
     ));
 
@@ -57,7 +63,10 @@ fn ready_source_handle_persists_exact_system_ciphertext_and_provenance() {
     assert_eq!(stored.event_ref, event_ref);
     assert_eq!(stored.lineage, HandleLineage::Source);
     assert!(stored.is_canonical, "source handle must be canonical");
-    assert!(!stored.is_tombstoned, "source handle must not be tombstoned");
+    assert!(
+        !stored.is_tombstoned,
+        "source handle must not be tombstoned"
+    );
 
     // The Ready state holds exactly the SystemCiphertextV1 and receipt we
     // supplied — no plaintext Private Value.
@@ -111,7 +120,13 @@ fn enclave_ciphertext_v1_bytes_never_appear_in_persisted_ready_state() {
         SystemCiphertextV1(vec![3]),
         MaterializationReceipt(vec![4]),
     );
-    record_pending_add(&mut core, &mut store, derived, vec![a, b], chain_event_ref(1, 2, 1));
+    record_pending_add(
+        &mut core,
+        &mut store,
+        derived,
+        vec![a, b],
+        chain_event_ref(1, 2, 1),
+    );
 
     // Build a known EnclaveCiphertextV1 with distinct byte patterns to use as
     // a sentinel: if its encoded form appeared in the persisted
@@ -141,7 +156,10 @@ fn enclave_ciphertext_v1_bytes_never_appear_in_persisted_ready_state() {
 
     let stored = store.handle_record(&derived).expect("must be persisted");
 
-    let HandleState::Ready { system_ciphertext, .. } = &stored.state else {
+    let HandleState::Ready {
+        system_ciphertext, ..
+    } = &stored.state
+    else {
         panic!("expected Ready state, got {:?}", stored.state);
     };
 
@@ -187,8 +205,20 @@ fn failure_reason_strings_in_persistence_contain_no_secret_material() {
         SystemCiphertextV1(vec![3]),
         MaterializationReceipt(vec![4]),
     );
-    record_pending_add(&mut core, &mut store, derived_mpc, vec![a, b], chain_event_ref(1, 2, 1));
-    record_pending_add(&mut core, &mut store, derived_enclave, vec![a, b], chain_event_ref(1, 2, 2));
+    record_pending_add(
+        &mut core,
+        &mut store,
+        derived_mpc,
+        vec![a, b],
+        chain_event_ref(1, 2, 1),
+    );
+    record_pending_add(
+        &mut core,
+        &mut store,
+        derived_enclave,
+        vec![a, b],
+        chain_event_ref(1, 2, 2),
+    );
 
     // Terminal MPC transformation failure.
     let mpc_reason = FailureReason::MpcTransformationFailure {
@@ -208,14 +238,22 @@ fn failure_reason_strings_in_persistence_contain_no_secret_material() {
 
     // Read back and assert non-secret reason strings.
     let mpc_record = store.handle_record(&derived_mpc).expect("mpc record");
-    let enclave_record = store.handle_record(&derived_enclave).expect("enclave record");
+    let enclave_record = store
+        .handle_record(&derived_enclave)
+        .expect("enclave record");
 
     let mpc_reason_str = extract_failure_reason_string(&mpc_record);
     let enclave_reason_str = extract_failure_reason_string(&enclave_record);
 
     // Reasons must be non-empty (category info is preserved).
-    assert!(!mpc_reason_str.is_empty(), "MPC failure reason must be non-empty");
-    assert!(!enclave_reason_str.is_empty(), "Enclave failure reason must be non-empty");
+    assert!(
+        !mpc_reason_str.is_empty(),
+        "MPC failure reason must be non-empty"
+    );
+    assert!(
+        !enclave_reason_str.is_empty(),
+        "Enclave failure reason must be non-empty"
+    );
 
     // Reasons must not contain secret material.
     assert_reason_is_non_secret(&mpc_reason_str, "MPC");
@@ -253,7 +291,13 @@ fn provenance_fields_survive_persistence_round_trip_for_ready_derived_handle() {
         SystemCiphertextV1(vec![3]),
         MaterializationReceipt(vec![4]),
     );
-    record_pending_add(&mut core, &mut store, derived, vec![a, b], derived_event_ref);
+    record_pending_add(
+        &mut core,
+        &mut store,
+        derived,
+        vec![a, b],
+        derived_event_ref,
+    );
 
     let system_ct = SystemCiphertextV1(vec![0x10, 0x20, 0x30]);
     let receipt = MaterializationReceipt(vec![0x40]);
@@ -276,8 +320,15 @@ fn provenance_fields_survive_persistence_round_trip_for_ready_derived_handle() {
     // All provenance fields must survive the persistence round-trip.
     assert_eq!(record.domain_id, domain, "domain_id must be preserved");
     assert_eq!(record.handle_key, derived, "handle_key must be preserved");
-    assert_eq!(record.handle_type, HandleType::Suint256, "handle_type must be preserved");
-    assert_eq!(record.event_ref, derived_event_ref, "event_ref must be preserved");
+    assert_eq!(
+        record.handle_type,
+        HandleType::Suint256,
+        "handle_type must be preserved"
+    );
+    assert_eq!(
+        record.event_ref, derived_event_ref,
+        "event_ref must be preserved"
+    );
     assert_eq!(
         record.lineage,
         HandleLineage::Derived {

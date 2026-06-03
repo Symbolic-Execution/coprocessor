@@ -20,10 +20,12 @@ use coprocessor_ciphertext_binding::{
 use coprocessor_enclave_runtime::{AttestationDigest, FakeEnclaveRuntime};
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
-    HandleId, HandleKey, HandleType, ImportedHandle, IngestionOutcome, MaterializationReceipt,
-    OperationCode, SystemCiphertextV1,
+    FailureReason, HandleId, HandleKey, HandleType, ImportedHandle, IngestionOutcome,
+    MaterializationReceipt, OperationCode, SystemCiphertextV1,
 };
-use coprocessor_host::{CoprocessorHost, HandleStateFailureCategory, HandleStateView, HostConfig, RequestId};
+use coprocessor_host::{
+    CoprocessorHost, HandleStateFailureCategory, HandleStateView, HostConfig, RequestId,
+};
 use coprocessor_mpc_client::{
     MpcSourceError, MpcToEnclaveResponse, MpcToEnclaveSource, ToEnclaveTransformationRequest,
 };
@@ -47,10 +49,32 @@ fn success_path_ready_view_exposes_only_opaque_ciphertext_and_receipt() {
     let mut host = running_host();
     let a = handle_key(1);
     let b = handle_key(2);
-    ingest_imported(&mut host, a, HandleType::Suint256, well_formed_system_ciphertext(a, "suint256"), 1, 1);
-    ingest_imported(&mut host, b, HandleType::Suint256, well_formed_system_ciphertext(b, "suint256"), 1, 2);
+    ingest_imported(
+        &mut host,
+        a,
+        HandleType::Suint256,
+        well_formed_system_ciphertext(a, "suint256"),
+        1,
+        1,
+    );
+    ingest_imported(
+        &mut host,
+        b,
+        HandleType::Suint256,
+        well_formed_system_ciphertext(b, "suint256"),
+        1,
+        2,
+    );
     let derived = handle_key(10);
-    ingest_derived(&mut host, derived, OperationCode::Add, HandleType::Suint256, vec![a, b], 2, 1);
+    ingest_derived(
+        &mut host,
+        derived,
+        OperationCode::Add,
+        HandleType::Suint256,
+        vec![a, b],
+        2,
+        1,
+    );
 
     let tasks = host.claim_resolution_tasks();
     let task = &tasks[0];
@@ -117,7 +141,11 @@ fn mpc_terminal_failure_reason_is_non_secret_and_non_empty() {
 
     let view = host.resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
 
-    let HandleStateView::Failed { category, ref reason } = view else {
+    let HandleStateView::Failed {
+        category,
+        ref reason,
+    } = view
+    else {
         panic!("expected Failed, got {view:?}");
     };
     assert_eq!(
@@ -167,7 +195,11 @@ fn enclave_terminal_failure_reason_is_non_secret_and_non_empty() {
 
     let view = host.resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
 
-    let HandleStateView::Failed { category, ref reason } = view else {
+    let HandleStateView::Failed {
+        category,
+        ref reason,
+    } = view
+    else {
         panic!("expected Failed, got {view:?}");
     };
     assert_eq!(
@@ -245,6 +277,81 @@ fn handle_id_and_request_id_are_permitted_diagnostics_not_stripped() {
     );
 }
 
+#[test]
+fn api_projection_sanitizes_secret_bearing_terminal_failure_reasons() {
+    let mut host = running_host();
+    let a = handle_key(1);
+    let b = handle_key(2);
+    ingest_imported(
+        &mut host,
+        a,
+        HandleType::Suint256,
+        well_formed_system_ciphertext(a, "suint256"),
+        1,
+        1,
+    );
+    ingest_imported(
+        &mut host,
+        b,
+        HandleType::Suint256,
+        well_formed_system_ciphertext(b, "suint256"),
+        1,
+        2,
+    );
+
+    let cases = [
+        (
+            handle_key(20),
+            FailureReason::MpcTransformationFailure {
+                reason: "wrapped_key=aaaa plaintext=secret".to_string(),
+            },
+            HandleStateFailureCategory::MpcTransformationFailure,
+            "mpc transformation failure",
+        ),
+        (
+            handle_key(21),
+            FailureReason::EnclaveExecutionFailure {
+                reason: "raw decrypted payload contained private_value".to_string(),
+            },
+            HandleStateFailureCategory::EnclaveExecutionFailure,
+            "enclave execution failure",
+        ),
+        (
+            handle_key(22),
+            FailureReason::MaterializationFailure {
+                reason: "data-encryption-key leaked in adapter detail".to_string(),
+            },
+            HandleStateFailureCategory::MaterializationFailure,
+            "materialization failure",
+        ),
+    ];
+
+    for (index, (derived, failure_reason, expected_category, expected_reason)) in
+        cases.into_iter().enumerate()
+    {
+        ingest_derived(
+            &mut host,
+            derived,
+            OperationCode::Add,
+            HandleType::Suint256,
+            vec![a, b],
+            2,
+            index as u32 + 1,
+        );
+        host.handle_graph_core_mut()
+            .fail_derived_handle(&derived, failure_reason)
+            .expect("pending derived handle can be failed");
+
+        assert_eq!(
+            host.get_handle_state(&derived),
+            HandleStateView::Failed {
+                category: expected_category,
+                reason: expected_reason.to_string(),
+            },
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Privacy helpers
 // ---------------------------------------------------------------------------
@@ -283,7 +390,13 @@ fn assert_reason_is_non_secret(reason: &str) {
 /// plaintext field to `HandleStateView`.
 fn assert_no_forbidden_keywords_in_view(view: &HandleStateView) {
     let debug_str = format!("{view:?}").to_lowercase();
-    const FORBIDDEN: &[&str] = &["plaintext", "private_key", "decrypted", "reader_secret", "wrapped_key"];
+    const FORBIDDEN: &[&str] = &[
+        "plaintext",
+        "private_key",
+        "decrypted",
+        "reader_secret",
+        "wrapped_key",
+    ];
     for word in FORBIDDEN {
         assert!(
             !debug_str.contains(word),
@@ -426,9 +539,31 @@ fn seed_add_derived(host: &mut CoprocessorHost) -> (HandleKey, HandleKey, Handle
     let a = handle_key(1);
     let b = handle_key(2);
     let derived = handle_key(10);
-    ingest_imported(host, a, HandleType::Suint256, well_formed_system_ciphertext(a, "suint256"), 1, 1);
-    ingest_imported(host, b, HandleType::Suint256, well_formed_system_ciphertext(b, "suint256"), 1, 2);
-    ingest_derived(host, derived, OperationCode::Add, HandleType::Suint256, vec![a, b], 2, 1);
+    ingest_imported(
+        host,
+        a,
+        HandleType::Suint256,
+        well_formed_system_ciphertext(a, "suint256"),
+        1,
+        1,
+    );
+    ingest_imported(
+        host,
+        b,
+        HandleType::Suint256,
+        well_formed_system_ciphertext(b, "suint256"),
+        1,
+        2,
+    );
+    ingest_derived(
+        host,
+        derived,
+        OperationCode::Add,
+        HandleType::Suint256,
+        vec![a, b],
+        2,
+        1,
+    );
     (a, b, derived)
 }
 
