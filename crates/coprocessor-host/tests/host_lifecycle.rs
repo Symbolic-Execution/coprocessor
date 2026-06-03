@@ -12,7 +12,7 @@ use coprocessor_handle_graph_core::{
 };
 use coprocessor_host::{
     CoprocessorHost, DependencyName, HostConfig, HostConfigError, HostStartError, LifecycleState,
-    Readiness,
+    Readiness, RetryPolicy,
 };
 
 #[test]
@@ -76,6 +76,7 @@ fn host_rejects_invalid_configuration_before_starting() {
     let invalid = HostConfig {
         deployment_label: "   ".to_string(),
         chain_view: Default::default(),
+        retry_policy: Default::default(),
     };
     let mut host = CoprocessorHost::new(invalid);
 
@@ -149,9 +150,22 @@ fn validate_config_accepts_local_development_and_rejects_empty_label() {
     let err = CoprocessorHost::validate_config(&HostConfig {
         deployment_label: String::new(),
         chain_view: Default::default(),
+        retry_policy: Default::default(),
     })
     .unwrap_err();
     assert_eq!(err, HostConfigError::EmptyDeploymentLabel);
+}
+
+#[test]
+fn validate_config_rejects_zero_resolution_attempts() {
+    let err = CoprocessorHost::validate_config(&HostConfig {
+        deployment_label: "test".to_string(),
+        chain_view: Default::default(),
+        retry_policy: RetryPolicy { max_attempts: 0 },
+    })
+    .unwrap_err();
+
+    assert_eq!(err, HostConfigError::RetryPolicyRequiresAttempt);
 }
 
 fn sample_handle_key() -> HandleKey {

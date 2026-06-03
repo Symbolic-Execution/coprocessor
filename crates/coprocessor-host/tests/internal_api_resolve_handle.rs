@@ -113,6 +113,7 @@ fn resolve_handle_returns_failed_with_lineage_violation_category_for_unknown_inp
         host.resolve_handle(default_request_id(), &derived),
         HandleStateView::Failed {
             category: HandleStateFailureCategory::LineageViolation,
+            reason: "unknown input handle".to_string(),
         },
     );
 }
@@ -137,6 +138,7 @@ fn resolve_handle_returns_failed_with_operation_violation_category_for_wrong_ari
         host.resolve_handle(default_request_id(), &derived),
         HandleStateView::Failed {
             category: HandleStateFailureCategory::OperationViolation,
+            reason: "wrong arity: expected 2, actual 1".to_string(),
         },
     );
 }

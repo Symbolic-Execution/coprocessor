@@ -32,13 +32,9 @@ use coprocessor_handle_graph_core::{
     HandleId, HandleKey, HandleType, ImportedHandle, IngestionOutcome, MaterializationReceipt,
     OperationCode, SystemCiphertextV1,
 };
-use coprocessor_host::{
-    CoprocessorHost, HandleStateView, HostConfig, ResolveClaimedTaskError,
-    TransformResolutionInputsError,
-};
+use coprocessor_host::{CoprocessorHost, HandleStateFailureCategory, HandleStateView, HostConfig};
 use coprocessor_mpc_client::{
-    MpcSourceError, MpcToEnclaveResponse, MpcToEnclaveSource, ToEnclaveTransformationError,
-    ToEnclaveTransformationRequest,
+    MpcSourceError, MpcToEnclaveResponse, MpcToEnclaveSource, ToEnclaveTransformationRequest,
 };
 use coprocessor_nitro_enclave::{
     EnclaveAttestationMaterial, EnclaveAttestationSource, LocalEnclaveAttestationConfig,
@@ -100,9 +96,7 @@ fn full_path_pending_derived_handle_resolves_to_ready() {
     // Execute via FakeEnclaveRuntime
     let fake_enclave = FakeEnclaveRuntime::deterministic();
 
-    let view = host
-        .resolve_claimed_task(task, &mpc_server, &attestation_source, &fake_enclave)
-        .expect("resolve must succeed");
+    let view = host.resolve_claimed_task(task, &mpc_server, &attestation_source, &fake_enclave);
 
     // Assert Ready state
     assert!(
@@ -185,9 +179,7 @@ fn select_input_order_preserved_into_enclave_resolution_task() {
     // Capture the enclave task via a recording enclave
     let recorder = RecordingEnclaveRuntime::new(FakeEnclaveRuntime::deterministic());
 
-    let _ = host
-        .resolve_claimed_task(task, &mpc_server, &attestation_source, &recorder)
-        .expect("resolve must succeed");
+    let _ = host.resolve_claimed_task(task, &mpc_server, &attestation_source, &recorder);
 
     let captured = recorder
         .captured_task()
@@ -245,9 +237,7 @@ fn ready_view_contains_no_plaintext_and_ciphertext_round_trips_encode() {
     ]);
 
     let recorder = RecordingEnclaveRuntime::new(FakeEnclaveRuntime::deterministic());
-    let view = host
-        .resolve_claimed_task(task, &mpc_server, &attestation_source, &recorder)
-        .expect("resolve");
+    let view = host.resolve_claimed_task(task, &mpc_server, &attestation_source, &recorder);
 
     let HandleStateView::Ready {
         system_ciphertext,
@@ -330,15 +320,13 @@ fn with_expected_attestation_succeeds_when_digest_matches_measurement() {
     // Fake with matching expected attestation digest
     let enclave = FakeEnclaveRuntime::with_expected_attestation(attestation.enclave_measurement);
 
-    let view = host
-        .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave)
-        .expect("resolve with matching attestation digest must succeed");
+    let view = host.resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
 
     assert!(matches!(view, HandleStateView::Ready { .. }));
 }
 
 #[test]
-fn attestation_mismatch_surfaces_failure_leaves_handle_pending_and_reclaimable() {
+fn attestation_mismatch_is_terminal_and_transitions_handle_to_failed() {
     let mut host = running_host();
     let a = handle_key(1);
     let b = handle_key(2);
@@ -379,29 +367,39 @@ fn attestation_mismatch_surfaces_failure_leaves_handle_pending_and_reclaimable()
     let expected = AttestationDigest([0x99; 32]);
     let enclave = FakeEnclaveRuntime::with_expected_attestation(expected);
 
-    let err = host
-        .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave)
-        .expect_err("mismatched attestation must fail");
+    // AttestationVerificationFailure is a terminal enclave error.
+    let view = host.resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
 
-    assert_eq!(
-        err,
-        ResolveClaimedTaskError::EnclaveExecutionFailed(
-            EnclaveExecutionError::AttestationVerificationFailure {
-                expected,
-                actual: AttestationDigest([DEFAULT_MEASUREMENT_SEED; 32]),
+    assert!(
+        matches!(
+            view,
+            HandleStateView::Failed {
+                category: HandleStateFailureCategory::EnclaveExecutionFailure,
+                ..
             }
-        )
+        ),
+        "attestation mismatch must produce a terminal Failed view, got {view:?}"
     );
-    assert_eq!(host.get_handle_state(&derived), HandleStateView::Pending);
+    assert!(
+        matches!(
+            host.get_handle_state(&derived),
+            HandleStateView::Failed {
+                category: HandleStateFailureCategory::EnclaveExecutionFailure,
+                ..
+            }
+        ),
+        "handle must be Failed after terminal enclave failure"
+    );
     assert!(
         !host.is_resolution_task_claimed(&derived),
-        "claim must be released after failed execution so retry policy can re-claim"
+        "claim must be released after terminal failure"
     );
-    assert_eq!(host.claim_resolution_tasks().len(), 1);
+    // Failed handle has no Resolution Readiness; cannot re-claim.
+    assert_eq!(host.claim_resolution_tasks().len(), 0);
 }
 
 #[test]
-fn transform_failure_surfaces_typed_error_leaves_handle_pending_and_reclaimable() {
+fn mpc_unavailable_is_retryable_keeps_handle_pending_and_allows_reclaim() {
     let mut host = running_host();
     let a = handle_key(1);
     let b = handle_key(2);
@@ -438,26 +436,20 @@ fn transform_failure_surfaces_typed_error_leaves_handle_pending_and_reclaimable(
     let mpc_server = FailingMpcServer;
     let enclave = FakeEnclaveRuntime::deterministic();
 
-    let err = host
-        .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave)
-        .expect_err("MPC transform failure must fail resolution");
+    // MPC Unavailable is retryable; handle stays Pending.
+    let view = host.resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
 
     assert_eq!(
-        err,
-        ResolveClaimedTaskError::TransformFailed(
-            TransformResolutionInputsError::MpcTransformationFailed {
-                input_index: 0,
-                error: ToEnclaveTransformationError::Unavailable {
-                    detail: "mpc unavailable".to_string(),
-                },
-            }
-        )
+        view,
+        HandleStateView::Pending,
+        "retryable MPC unavailability must keep handle Pending"
     );
     assert_eq!(host.get_handle_state(&derived), HandleStateView::Pending);
     assert!(
         !host.is_resolution_task_claimed(&derived),
-        "claim must be released after transform failure so retry policy can re-claim"
+        "claim must be released after retryable failure so the scheduler can re-claim"
     );
+    // Handle is still Pending so it remains ready for re-claim.
     assert_eq!(host.claim_resolution_tasks().len(), 1);
 }
 
@@ -504,9 +496,7 @@ fn ready_derived_handle_exposes_structured_receipt_with_correct_fields() {
     ]);
     let enclave = FakeEnclaveRuntime::deterministic();
 
-    let view = host
-        .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave)
-        .expect("resolve must succeed");
+    let view = host.resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
 
     let HandleStateView::Ready {
         derived_receipt, ..
@@ -577,9 +567,7 @@ fn select_structured_receipt_preserves_predicate_when_true_when_false_order() {
     ]);
     let enclave = FakeEnclaveRuntime::deterministic();
 
-    let view = host
-        .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave)
-        .expect("resolve must succeed");
+    let view = host.resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
 
     let HandleStateView::Ready {
         derived_receipt, ..
@@ -654,9 +642,7 @@ fn receipt_round_trip_decode_encode_for_each_arity() {
         let mpc_server =
             ProgrammableMpcServer::with_successes(vec![fake_enclave_ciphertext(a, 0xE0)]);
         let enclave = FakeEnclaveRuntime::deterministic();
-        let view = host
-            .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave)
-            .expect("Not resolve");
+        let view = host.resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
         let HandleStateView::Ready {
             derived_receipt, ..
         } = view
@@ -712,9 +698,7 @@ fn receipt_round_trip_decode_encode_for_each_arity() {
             fake_enclave_ciphertext(b, 0xC1),
         ]);
         let enclave = FakeEnclaveRuntime::deterministic();
-        let view = host
-            .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave)
-            .expect("Add resolve");
+        let view = host.resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
         let HandleStateView::Ready {
             derived_receipt, ..
         } = view
@@ -779,9 +763,7 @@ fn receipt_round_trip_decode_encode_for_each_arity() {
             fake_enclave_ciphertext(when_false, 0xD2),
         ]);
         let enclave = FakeEnclaveRuntime::deterministic();
-        let view = host
-            .resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave)
-            .expect("Select resolve");
+        let view = host.resolve_claimed_task(task, &mpc_server, &attestation_source, &enclave);
         let HandleStateView::Ready {
             derived_receipt, ..
         } = view

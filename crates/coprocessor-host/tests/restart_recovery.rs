@@ -117,6 +117,7 @@ fn restored_host_serves_failed_derived_record_with_stable_category() {
         host.get_handle_state(&failed),
         HandleStateView::Failed {
             category: HandleStateFailureCategory::OperationViolation,
+            reason: "wrong arity: expected 2, actual 1".to_string(),
         }
     );
 }
