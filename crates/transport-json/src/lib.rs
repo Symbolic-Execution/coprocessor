@@ -22,6 +22,12 @@ use coprocessor_handle_graph_core::{
     ChainEventRef, ChainId, ContractAddress as CoreContractAddress, DomainId as CoreDomainId,
     HandleId as CoreHandleId,
 };
+use serde::{
+    de::{self, Error as DeError, Visitor},
+    Deserialize, Deserializer, Serialize, Serializer,
+};
+use std::fmt;
+use std::marker::PhantomData;
 
 mod base64_codec;
 mod hex_codec;
@@ -82,6 +88,24 @@ macro_rules! hex_identifier {
                 Self(out)
             }
         }
+
+        impl Serialize for $wrapper {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                serializer.serialize_str(&self.to_hex())
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $wrapper {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                deserializer.deserialize_str(HexIdentifierVisitor::<Self>::new())
+            }
+        }
     };
 }
 
@@ -125,6 +149,36 @@ hex_identifier_conversion!(ReaderId, ReaderIdHex);
 hex_identifier_conversion!(KeyId, KeyIdHex);
 hex_identifier_conversion!(BindingAttestationDigest, AttestationDigestHex);
 
+struct HexIdentifierVisitor<T> {
+    _marker: PhantomData<T>,
+}
+
+impl<T> HexIdentifierVisitor<T> {
+    fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T> Visitor<'_> for HexIdentifierVisitor<T>
+where
+    T: HexIdentifier,
+{
+    type Value = T;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&field_shape_marker(T::FIELD, "string"))
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        T::from_hex(value).map_err(|error| E::custom(hex_error_marker(error)))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // ChainEventRef JSON object
 //
@@ -133,91 +187,66 @@ hex_identifier_conversion!(BindingAttestationDigest, AttestationDigestHex);
 // identifier round-trip, and the integer fields use JSON numbers within u64 /
 // u32 range.
 //
-// Encoding uses the json_codec write helpers so the output format is stable.
-// Decoding uses serde_json to parse the document, then validates each field
-// individually so errors carry the field name and expected shape without
-// surfacing serde_json's internal message text (which can echo input fragments).
+// Encoding and decoding use an internal serde DTO so the transport boundary is
+// isolated from the domain model. Serde errors are translated into sanitized
+// JsonParseError variants; serde_json's Display/Debug text is never exposed to
+// callers because it can echo input fragments.
 //
-// Duplicate field behavior: serde_json uses last-wins for duplicate keys,
-// which differs from the prior hand-rolled parser's DuplicateField error.
-// Tests that asserted DuplicateField on ChainEventRef decode have been updated
-// to reflect serde-standard behavior. The DuplicateField variant remains in
-// JsonParseError because parse_object (used by mpc-config) still produces it.
+// Duplicate field behavior: ChainEventRef now follows serde's struct
+// deserializer, which rejects duplicates as a generic JSON shape error rather
+// than the old bespoke DuplicateField variant. The DuplicateField variant
+// remains in JsonParseError because parse_object (used by mpc-config) still
+// produces it.
 // ---------------------------------------------------------------------------
 
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ChainEventRefDto {
+    #[serde(deserialize_with = "deserialize_chain_id")]
+    chain_id: u64,
+    #[serde(deserialize_with = "deserialize_block_number")]
+    block_number: u64,
+    block_hash: BlockHashHex,
+    tx_hash: TxHashHex,
+    #[serde(deserialize_with = "deserialize_log_index")]
+    log_index: u32,
+}
+
+impl From<&ChainEventRef> for ChainEventRefDto {
+    fn from(value: &ChainEventRef) -> Self {
+        Self {
+            chain_id: value.chain_id.0,
+            block_number: value.block_number,
+            block_hash: BlockHashHex(value.block_hash),
+            tx_hash: TxHashHex(value.tx_hash),
+            log_index: value.log_index,
+        }
+    }
+}
+
+impl From<ChainEventRefDto> for ChainEventRef {
+    fn from(value: ChainEventRefDto) -> Self {
+        Self {
+            chain_id: ChainId(value.chain_id),
+            block_number: value.block_number,
+            block_hash: value.block_hash.0,
+            tx_hash: value.tx_hash.0,
+            log_index: value.log_index,
+        }
+    }
+}
+
 pub fn encode_chain_event_ref(value: &ChainEventRef) -> String {
-    let block_hash = BlockHashHex(value.block_hash).to_hex();
-    let tx_hash = TxHashHex(value.tx_hash).to_hex();
-    let mut out = String::new();
-    json_codec::write_object_open(&mut out);
-    json_codec::write_uint_field(&mut out, "chain_id", value.chain_id.0, false);
-    json_codec::write_uint_field(&mut out, "block_number", value.block_number, true);
-    json_codec::write_string_field(&mut out, "block_hash", &block_hash, true);
-    json_codec::write_string_field(&mut out, "tx_hash", &tx_hash, true);
-    json_codec::write_uint_field(&mut out, "log_index", u64::from(value.log_index), true);
-    json_codec::write_object_close(&mut out);
-    out
+    serde_json::to_string(&ChainEventRefDto::from(value))
+        .expect("ChainEventRef DTO serialization is infallible")
 }
 
 pub fn decode_chain_event_ref(text: &str) -> Result<ChainEventRef, JsonParseError> {
-    // Parse with serde_json. The Deserializer is used directly so that
-    // trailing-content failures can be distinguished from mid-document syntax
-    // errors — both map to the same serde category but different transport
-    // variants (TrailingContent vs UnexpectedToken).
     let mut de = serde_json::Deserializer::from_str(text);
-    let value: serde_json::Value =
+    let value: ChainEventRefDto =
         serde::de::Deserialize::deserialize(&mut de).map_err(map_serde_json_to_parse_error)?;
     de.end().map_err(|_| JsonParseError::TrailingContent)?;
-
-    let obj = match value {
-        serde_json::Value::Object(map) => map,
-        _ => return Err(JsonParseError::UnexpectedToken { expected: "object" }),
-    };
-
-    // Reject unknown fields before attempting to extract known ones so an
-    // extra field always surfaces as UnexpectedField regardless of whether
-    // any required field is missing.
-    const KNOWN: &[&str] = &[
-        "chain_id",
-        "block_number",
-        "block_hash",
-        "tx_hash",
-        "log_index",
-    ];
-    for key in obj.keys() {
-        if !KNOWN.contains(&key.as_str()) {
-            return Err(JsonParseError::UnexpectedField);
-        }
-    }
-
-    let chain_id = take_uint_value(&obj, "chain_id")?;
-    let block_number = take_uint_value(&obj, "block_number")?;
-    let block_hash_str = take_string_value(&obj, "block_hash")?;
-    let tx_hash_str = take_string_value(&obj, "tx_hash")?;
-    let log_index_u64 = take_uint_value(&obj, "log_index")?;
-
-    let block_hash =
-        BlockHashHex::from_hex(&block_hash_str).map_err(|error| JsonParseError::InvalidHex {
-            field: "block_hash",
-            error,
-        })?;
-    let tx_hash =
-        TxHashHex::from_hex(&tx_hash_str).map_err(|error| JsonParseError::InvalidHex {
-            field: "tx_hash",
-            error,
-        })?;
-    let log_index = u32::try_from(log_index_u64).map_err(|_| JsonParseError::IntegerOverflow {
-        field: "log_index",
-        expected: "u32",
-    })?;
-
-    Ok(ChainEventRef {
-        chain_id: ChainId(chain_id),
-        block_number,
-        block_hash: block_hash.0,
-        tx_hash: tx_hash.0,
-        log_index,
-    })
+    Ok(value.into())
 }
 
 /// Map a serde_json parse error to a sanitized [`JsonParseError`] variant.
@@ -225,6 +254,24 @@ pub fn decode_chain_event_ref(text: &str) -> Result<ChainEventRef, JsonParseErro
 /// input fragments (offending tokens, field values) which would violate the
 /// transport's sanitized-error guarantee.
 fn map_serde_json_to_parse_error(err: serde_json::Error) -> JsonParseError {
+    let message = err.to_string();
+    if let Some(error) = marker_to_parse_error(&message) {
+        return error;
+    }
+    if let Some(field) = missing_field_from_serde_error(&message) {
+        return JsonParseError::MissingField { field };
+    }
+    if message.starts_with("unknown field") {
+        return JsonParseError::UnexpectedField;
+    }
+    if message.starts_with("duplicate field") {
+        return JsonParseError::UnexpectedToken {
+            expected: "unique field",
+        };
+    }
+    if err.is_data() {
+        return JsonParseError::UnexpectedToken { expected: "object" };
+    }
     if err.is_eof() {
         JsonParseError::UnexpectedEndOfInput { expected: "object" }
     } else {
@@ -234,38 +281,193 @@ fn map_serde_json_to_parse_error(err: serde_json::Error) -> JsonParseError {
     }
 }
 
-fn take_uint_value(
-    obj: &serde_json::Map<String, serde_json::Value>,
-    field: &'static str,
-) -> Result<u64, JsonParseError> {
-    match obj.get(field) {
-        None => Err(JsonParseError::MissingField { field }),
-        Some(serde_json::Value::Number(n)) => n
+fn deserialize_chain_id<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_u64_field(deserializer, "chain_id")
+}
+
+fn deserialize_block_number<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_u64_field(deserializer, "block_number")
+}
+
+fn deserialize_log_index<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = deserialize_u64_field(deserializer, "log_index")?;
+    u32::try_from(value).map_err(|_| D::Error::custom(integer_overflow_marker("log_index", "u32")))
+}
+
+fn deserialize_u64_field<'de, D>(deserializer: D, field: &'static str) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::Number(number) => number
             .as_u64()
-            .ok_or(JsonParseError::InvalidUnsignedNumber { field }),
-        Some(serde_json::Value::String(_)) => Err(JsonParseError::FieldShape {
+            .ok_or_else(|| D::Error::custom(invalid_unsigned_marker(field))),
+        _ => Err(D::Error::custom(field_shape_marker(
             field,
-            expected: "unsigned integer",
-        }),
-        Some(_) => Err(JsonParseError::FieldShape {
-            field,
-            expected: "unsigned integer",
-        }),
+            "unsigned integer",
+        ))),
     }
 }
 
-fn take_string_value(
-    obj: &serde_json::Map<String, serde_json::Value>,
-    field: &'static str,
-) -> Result<String, JsonParseError> {
-    match obj.get(field) {
-        None => Err(JsonParseError::MissingField { field }),
-        Some(serde_json::Value::String(s)) => Ok(s.clone()),
-        Some(_) => Err(JsonParseError::FieldShape {
+const SERDE_ERROR_PREFIX: &str = "__transport_json_error__:";
+
+fn field_shape_marker(field: &'static str, expected: &'static str) -> String {
+    format!(
+        "{SERDE_ERROR_PREFIX}field_shape:{field}:{}",
+        marker_expected(expected)
+    )
+}
+
+fn invalid_unsigned_marker(field: &'static str) -> String {
+    format!("{SERDE_ERROR_PREFIX}invalid_unsigned:{field}")
+}
+
+fn integer_overflow_marker(field: &'static str, expected: &'static str) -> String {
+    format!("{SERDE_ERROR_PREFIX}integer_overflow:{field}:{expected}")
+}
+
+fn hex_error_marker(error: HexDecodeError) -> String {
+    match error {
+        HexDecodeError::MissingPrefix { field } => {
+            format!("{SERDE_ERROR_PREFIX}hex:missing_prefix:{field}")
+        }
+        HexDecodeError::OddLength {
             field,
-            expected: "string",
-        }),
+            actual_chars,
+        } => format!("{SERDE_ERROR_PREFIX}hex:odd_length:{field}:{actual_chars}"),
+        HexDecodeError::UppercaseDigit { field } => {
+            format!("{SERDE_ERROR_PREFIX}hex:uppercase_digit:{field}")
+        }
+        HexDecodeError::InvalidDigit { field } => {
+            format!("{SERDE_ERROR_PREFIX}hex:invalid_digit:{field}")
+        }
+        HexDecodeError::WrongByteLength {
+            field,
+            expected,
+            actual,
+        } => format!("{SERDE_ERROR_PREFIX}hex:wrong_byte_length:{field}:{expected}:{actual}"),
     }
+}
+
+fn marker_expected(expected: &'static str) -> &'static str {
+    match expected {
+        "unsigned integer" => "unsigned_integer",
+        "string" => "string",
+        other => other,
+    }
+}
+
+fn unmarker_expected(expected: &str) -> &'static str {
+    match expected {
+        "unsigned_integer" => "unsigned integer",
+        "string" => "string",
+        _ => "value",
+    }
+}
+
+fn marker_to_parse_error(message: &str) -> Option<JsonParseError> {
+    let start = message.find(SERDE_ERROR_PREFIX)?;
+    let marker = message[start + SERDE_ERROR_PREFIX.len()..]
+        .split_whitespace()
+        .next()
+        .unwrap_or_default();
+    let parts: Vec<&str> = marker.split(':').collect();
+    match parts.as_slice() {
+        ["field_shape", field, expected] => Some(JsonParseError::FieldShape {
+            field: known_field(field)?,
+            expected: unmarker_expected(expected),
+        }),
+        ["invalid_unsigned", field] => Some(JsonParseError::InvalidUnsignedNumber {
+            field: known_field(field)?,
+        }),
+        ["integer_overflow", field, expected] => Some(JsonParseError::IntegerOverflow {
+            field: known_field(field)?,
+            expected: match *expected {
+                "u32" => "u32",
+                _ => "integer",
+            },
+        }),
+        ["hex", "missing_prefix", field] => {
+            let field = known_field(field)?;
+            Some(JsonParseError::InvalidHex {
+                field,
+                error: HexDecodeError::MissingPrefix { field },
+            })
+        }
+        ["hex", "odd_length", field, actual_chars] => {
+            let field = known_field(field)?;
+            Some(JsonParseError::InvalidHex {
+                field,
+                error: HexDecodeError::OddLength {
+                    field,
+                    actual_chars: actual_chars.parse().ok()?,
+                },
+            })
+        }
+        ["hex", "uppercase_digit", field] => {
+            let field = known_field(field)?;
+            Some(JsonParseError::InvalidHex {
+                field,
+                error: HexDecodeError::UppercaseDigit { field },
+            })
+        }
+        ["hex", "invalid_digit", field] => {
+            let field = known_field(field)?;
+            Some(JsonParseError::InvalidHex {
+                field,
+                error: HexDecodeError::InvalidDigit { field },
+            })
+        }
+        ["hex", "wrong_byte_length", field, expected, actual] => {
+            let field = known_field(field)?;
+            Some(JsonParseError::InvalidHex {
+                field,
+                error: HexDecodeError::WrongByteLength {
+                    field,
+                    expected: expected.parse().ok()?,
+                    actual: actual.parse().ok()?,
+                },
+            })
+        }
+        _ => None,
+    }
+}
+
+fn missing_field_from_serde_error(message: &str) -> Option<&'static str> {
+    known_fields()
+        .iter()
+        .copied()
+        .find(|field| message.starts_with(&format!("missing field `{field}`")))
+}
+
+fn known_field(field: &str) -> Option<&'static str> {
+    known_fields().iter().copied().find(|known| *known == field)
+}
+
+fn known_fields() -> &'static [&'static str] {
+    &[
+        "chain_id",
+        "block_number",
+        "block_hash",
+        "tx_hash",
+        "log_index",
+        "handle_id",
+        "contract_address",
+        "domain_id",
+        "request_id",
+        "reader_id",
+        "key_id",
+        "attestation_digest",
+    ]
 }
 
 // ---------------------------------------------------------------------------

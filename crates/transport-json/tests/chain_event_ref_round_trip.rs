@@ -89,8 +89,13 @@ fn top_level_array_is_rejected_with_unexpected_token() {
 
 #[test]
 fn missing_field_is_rejected_with_specific_field_name() {
-    let json = "{\"chain_id\":1,\"block_number\":2,\"block_hash\":\"0x00\",\"tx_hash\":\"0x00\"}";
-    let err = decode_chain_event_ref(json).unwrap_err();
+    let baseline = sample_chain_event_ref();
+    let json = format!(
+        "{{\"chain_id\":1,\"block_number\":2,\"block_hash\":\"{}\",\"tx_hash\":\"{}\"}}",
+        hex(&baseline.block_hash),
+        hex(&baseline.tx_hash),
+    );
+    let err = decode_chain_event_ref(&json).unwrap_err();
     assert!(matches!(
         err,
         JsonParseError::MissingField { field: "log_index" }
@@ -217,11 +222,9 @@ fn trailing_content_after_object_is_rejected() {
 }
 
 #[test]
-fn duplicate_field_uses_last_value_serde_standard_behavior() {
-    // serde_json uses last-wins for duplicate keys (serde-standard behavior).
-    // The hand-rolled parser previously rejected duplicates with DuplicateField.
-    // Behavior change: duplicate fields no longer produce an error; the second
-    // occurrence wins, so the decoded chain_id is the second value.
+fn duplicate_field_uses_serde_struct_behavior_without_duplicate_field_variant() {
+    // Serde's struct deserializer rejects duplicate keys. The transport no
+    // longer exposes the hand-rolled DuplicateField variant on this path.
     let baseline = sample_chain_event_ref();
     let different_chain_id = baseline.chain_id.0 + 1;
     let json = format!(
@@ -233,13 +236,18 @@ fn duplicate_field_uses_last_value_serde_standard_behavior() {
         hex(&baseline.tx_hash),
         baseline.log_index,
     );
-    let decoded = decode_chain_event_ref(&json).expect("serde last-wins decode");
-    assert_eq!(decoded.chain_id.0, different_chain_id);
+    let err = decode_chain_event_ref(&json).unwrap_err();
+    assert!(matches!(
+        err,
+        JsonParseError::UnexpectedToken {
+            expected: "unique field"
+        }
+    ));
 }
 
 #[test]
 fn escape_sequence_in_hex_field_is_rejected_as_invalid_hex() {
-    // serde_json decodes   to the null character, so the field value
+    // serde_json decodes \u0000 to the null character, so the field value
     // "0x\u{0}" passes JSON parsing but fails hex validation. The error
     // surfaces as InvalidHex rather than UnsupportedStringEscape (a
     // hand-rolled-parser-specific variant).

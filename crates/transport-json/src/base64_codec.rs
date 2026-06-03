@@ -6,12 +6,25 @@
 //! bits in the final group. The error type is intentionally coarse — the
 //! caller only needs to know the payload was malformed, not which byte.
 //!
-//! The implementation delegates to the `base64` crate. The pre-built
-//! `STANDARD` engine already uses `RequireCanonical` padding mode and refuses
-//! trailing bits, which preserves all the rejection invariants from the
-//! hand-rolled decoder.
+//! The implementation delegates to the `base64` crate with an explicit
+//! canonical configuration so the rejection invariants do not depend on a
+//! pre-built engine's defaults.
 
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::{
+    alphabet,
+    engine::{
+        general_purpose::{GeneralPurpose, GeneralPurposeConfig},
+        DecodePaddingMode,
+    },
+    Engine as _,
+};
+
+const CANONICAL_STANDARD: GeneralPurpose = GeneralPurpose::new(
+    &alphabet::STANDARD,
+    GeneralPurposeConfig::new()
+        .with_decode_padding_mode(DecodePaddingMode::RequireCanonical)
+        .with_decode_allow_trailing_bits(false),
+);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Base64DecodeError {
@@ -22,7 +35,7 @@ pub enum Base64DecodeError {
 }
 
 pub fn encode_into(out: &mut String, bytes: &[u8]) {
-    STANDARD.encode_string(bytes, out);
+    CANONICAL_STANDARD.encode_string(bytes, out);
 }
 
 pub fn decode(text: &str) -> Result<Vec<u8>, Base64DecodeError> {
@@ -32,7 +45,7 @@ pub fn decode(text: &str) -> Result<Vec<u8>, Base64DecodeError> {
     if text.len() % 4 != 0 {
         return Err(Base64DecodeError::InvalidLength);
     }
-    STANDARD.decode(text).map_err(map_decode_error)
+    CANONICAL_STANDARD.decode(text).map_err(map_decode_error)
 }
 
 fn map_decode_error(err: base64::DecodeError) -> Base64DecodeError {

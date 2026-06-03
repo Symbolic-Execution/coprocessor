@@ -1,11 +1,10 @@
 //! Minimal hand-rolled JSON codec for the Coprocessor API surface.
 //!
-//! The decoder targets the small subset of JSON the transport actually emits:
-//! one top-level value, which is either a quoted string (used for envelope
-//! base64 payloads) or a flat object whose values are JSON strings or
-//! unsigned-integer numbers (used for ChainEventRef). Nested objects, arrays,
-//! floats, escape sequences inside strings, signed numbers, booleans, and
-//! `null` are all rejected with stable [`JsonParseError`] variants.
+//! The remaining decoder targets the small subset of JSON still consumed by
+//! `mpc-config`: a flat object whose values are JSON strings or
+//! unsigned-integer numbers. Nested objects, arrays, floats, escape sequences
+//! inside strings, signed numbers, booleans, and `null` are all rejected with
+//! stable [`JsonParseError`] variants.
 //!
 //! Errors name the parsing step that failed and the field where the failure
 //! was observed when one is known. They never include payload bytes.
@@ -47,54 +46,6 @@ pub enum JsonParseError {
         field: &'static str,
         expected: &'static str,
     },
-}
-
-// ---------------------------------------------------------------------------
-// Object writer helpers (used by lib.rs)
-// ---------------------------------------------------------------------------
-
-pub fn write_object_open(out: &mut String) {
-    out.push('{');
-}
-
-pub fn write_object_close(out: &mut String) {
-    out.push('}');
-}
-
-pub fn write_string_field(out: &mut String, key: &str, value: &str, leading_comma: bool) {
-    if leading_comma {
-        out.push(',');
-    }
-    write_key(out, key);
-    write_string_literal(out, value);
-}
-
-pub fn write_uint_field(out: &mut String, key: &str, value: u64, leading_comma: bool) {
-    if leading_comma {
-        out.push(',');
-    }
-    write_key(out, key);
-    out.push_str(&value.to_string());
-}
-
-fn write_key(out: &mut String, key: &str) {
-    write_string_literal(out, key);
-    out.push(':');
-}
-
-fn write_string_literal(out: &mut String, value: &str) {
-    // Strings on this transport are hex or base64 — both restricted alphabets
-    // with no characters that need JSON escaping. The writer asserts that
-    // invariant rather than emitting escapes that the reader would reject.
-    debug_assert!(
-        value
-            .bytes()
-            .all(|b| matches!(b, b' '..=b'~') && b != b'"' && b != b'\\'),
-        "JSON transport writer received a string that would require escaping",
-    );
-    out.push('"');
-    out.push_str(value);
-    out.push('"');
 }
 
 // ---------------------------------------------------------------------------
