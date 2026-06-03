@@ -131,8 +131,42 @@ fn failure_reason_string(reason: &FailureReason) -> String {
                 "wrong output handle type".to_string()
             }
         },
-        FailureReason::MpcTransformationFailure { reason } => reason.clone(),
-        FailureReason::EnclaveExecutionFailure { reason } => reason.clone(),
-        FailureReason::MaterializationFailure { reason } => reason.clone(),
+        FailureReason::MpcTransformationFailure { reason } => {
+            sanitize_failure_reason(reason, "mpc transformation failure")
+        }
+        FailureReason::EnclaveExecutionFailure { reason } => {
+            sanitize_failure_reason(reason, "enclave execution failure")
+        }
+        FailureReason::MaterializationFailure { reason } => {
+            sanitize_failure_reason(reason, "materialization failure")
+        }
     }
+}
+
+fn sanitize_failure_reason(reason: &str, fallback: &str) -> String {
+    if reason.trim().is_empty()
+        || reason.chars().any(|c| !c.is_ascii_graphic() && c != ' ')
+        || contains_forbidden_secret_marker(reason)
+    {
+        return fallback.to_string();
+    }
+    reason.to_string()
+}
+
+fn contains_forbidden_secret_marker(reason: &str) -> bool {
+    let normalized = reason.to_ascii_lowercase().replace(['-', ' '], "_");
+    [
+        "plaintext",
+        "private_value",
+        "private_key",
+        "data_encryption_key",
+        "decryption_key",
+        "reader_secret",
+        "wrapped_key",
+        "decrypted",
+        "raw_decrypted_payload",
+        "enclave_private_key",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
 }
