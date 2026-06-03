@@ -21,15 +21,14 @@ use coprocessor_ciphertext_binding::{EnclaveCiphertextV1, RequestId};
 use coprocessor_enclave_runtime::{
     EnclaveExecutionError, EnclaveRuntime, ResolutionTask as EnclaveResolutionTask,
 };
-use coprocessor_handle_graph_core::{
-    HandleGraphCore, HandleKey, MaterializationReceipt, MaterializeDerivedError, OperationCode,
-    SystemCiphertextV1,
-};
+use coprocessor_handle_graph_core::{HandleGraphCore, MaterializeDerivedError, SystemCiphertextV1};
+
 use coprocessor_mpc_client::MpcToEnclaveSource;
 use coprocessor_nitro_enclave::{
     EnclaveAttestationError, EnclaveAttestationMaterial, EnclaveAttestationSource,
 };
 
+use crate::derived_receipt::encode_derived_materialization_receipt;
 use crate::internal_api::{project_canonical, HandleStateView};
 use crate::resolution_scheduler::ResolutionTask;
 use crate::resolution_scheduler::ResolutionTaskClaims;
@@ -118,7 +117,7 @@ pub(crate) fn resolve_claimed_task(
     let core_ciphertext = SystemCiphertextV1(outcome.system_ciphertext.encode());
 
     // Bridge: EnclaveMaterializationReceipt -> minimal opaque bytes
-    let core_receipt = encode_materialization_receipt(&outcome.receipt);
+    let core_receipt = encode_derived_materialization_receipt(&outcome.receipt);
 
     if let Err(error) =
         core.materialize_derived_handle(&task.output_handle_key, core_ciphertext, core_receipt)
@@ -165,54 +164,6 @@ fn build_enclave_task(
         output_handle_type: task.output_handle_type,
         input_handle_keys: task.input_handle_keys.clone(),
         input_ciphertexts,
-    }
-}
-
-/// Minimal deterministic encoding of an `EnclaveMaterializationReceipt` into
-/// opaque bytes suitable for the core's `MaterializationReceipt(Vec<u8>)`.
-///
-/// Format (all big-endian):
-///   1 byte  : OperationCode discriminant
-///  60 bytes : output Handle Key (8 chain_id + 20 contract_address + 32 handle_id)
-///   4 bytes : input count (u32)
-///  60 bytes : each input Handle Key
-///  32 bytes : attestation digest
-///
-/// Contains only non-secret evidence. Never embeds ciphertext, wrapped keys,
-/// raw attestation documents, or enclave private key material.
-fn encode_materialization_receipt(
-    receipt: &coprocessor_enclave_runtime::EnclaveMaterializationReceipt,
-) -> MaterializationReceipt {
-    let mut bytes = Vec::new();
-    bytes.push(op_code_byte(receipt.operation_code));
-    encode_handle_key_into(&mut bytes, &receipt.output_handle_key);
-    bytes.extend_from_slice(&(receipt.input_handle_keys.len() as u32).to_be_bytes());
-    for input_key in &receipt.input_handle_keys {
-        encode_handle_key_into(&mut bytes, input_key);
-    }
-    bytes.extend_from_slice(&receipt.attestation_digest.0);
-    MaterializationReceipt(bytes)
-}
-
-fn encode_handle_key_into(out: &mut Vec<u8>, key: &HandleKey) {
-    out.extend_from_slice(&key.chain_id.0.to_be_bytes());
-    out.extend_from_slice(&key.contract_address.0);
-    out.extend_from_slice(&key.handle_id.0);
-}
-
-fn op_code_byte(op: OperationCode) -> u8 {
-    match op {
-        OperationCode::Add => 1,
-        OperationCode::Sub => 2,
-        OperationCode::Eq => 3,
-        OperationCode::Lt => 4,
-        OperationCode::Lte => 5,
-        OperationCode::Gt => 6,
-        OperationCode::Gte => 7,
-        OperationCode::And => 8,
-        OperationCode::Or => 9,
-        OperationCode::Not => 10,
-        OperationCode::Select => 11,
     }
 }
 
