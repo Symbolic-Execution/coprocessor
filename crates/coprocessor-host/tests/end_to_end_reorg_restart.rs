@@ -21,8 +21,9 @@ use coprocessor_ciphertext_binding::{
 use coprocessor_enclave_runtime::{AttestationDigest, FakeEnclaveRuntime};
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
-    HandleGraphCore, HandleId, HandleKey, HandleType, ImportedHandle, InMemoryHandlePersistence,
-    IngestionOutcome, MaterializationReceipt, OperationCode, SystemCiphertextV1,
+    HandleGraphCore, HandleId, HandleKey, HandlePersistence, HandleType, ImportedHandle,
+    InMemoryHandlePersistence, IngestionOutcome, MaterializationReceipt, OperationCode,
+    SystemCiphertextV1,
 };
 use coprocessor_host::{
     ChainEventSource, ChainView, ChainViewPoll, CoprocessorHost, HandleStateView, HostConfig,
@@ -246,9 +247,9 @@ fn reorg_audit_query_retains_provenance_for_tombstoned_source_and_cascade_derive
 // Restart recovery scenarios (persistence-backed)
 // ============================================================
 
-/// After restore_from_persistence, re-applying the same Chain Events that were
-/// consumed before restart is idempotent by ChainEventRef. Handle counts and
-/// state projections remain stable (no duplicate Handle Records).
+/// After restore_from_persistence, re-ingesting the same Chain Events that were
+/// consumed before restart is idempotent by ChainEventRef. Persisted Handle
+/// Record counts and state projections remain stable.
 #[test]
 fn restart_replaying_consumed_events_is_idempotent_by_chain_event_ref() {
     let mut store = InMemoryHandlePersistence::new();
@@ -282,32 +283,35 @@ fn restart_replaying_consumed_events_is_idempotent_by_chain_event_ref() {
     expect_recorded(pre.apply_chain_event_with_persistence(ev_b.clone(), &mut store));
     expect_recorded(pre.apply_chain_event_with_persistence(ev_derived.clone(), &mut store));
 
+    let persisted_record_count = store.handle_records().len();
+    let persisted_consumed_event_count = store.consumed_events().len();
     let mut host = boot_restored_host(&store);
 
-    // Re-applying each consumed event must be Idempotent by ChainEventRef.
-    assert!(
-        matches!(
-            host.handle_graph_core_mut().apply_chain_event(ev_a),
-            IngestionOutcome::Idempotent
-        ),
-        "replay of source_a must be Idempotent after restart"
+    let replay_report = host.ingest_chain_events(&mut FixedChainSource::new(vec![
+        ev_a, ev_b, ev_derived,
+    ]));
+    assert_eq!(
+        replay_report.recorded, 0,
+        "replay after restart must not create new Handle Records"
     );
-    assert!(
-        matches!(
-            host.handle_graph_core_mut().apply_chain_event(ev_b),
-            IngestionOutcome::Idempotent
-        ),
-        "replay of source_b must be Idempotent after restart"
+    assert_eq!(
+        replay_report.idempotent, 3,
+        "each replayed event must be Idempotent by ChainEventRef"
     );
-    assert!(
-        matches!(
-            host.handle_graph_core_mut().apply_chain_event(ev_derived),
-            IngestionOutcome::Idempotent
-        ),
-        "replay of derived must be Idempotent after restart"
+    assert_eq!(replay_report.duplicates_rejected, 0);
+    assert_eq!(replay_report.directly_tombstoned, 0);
+    assert_eq!(replay_report.cascade_tombstoned, 0);
+    assert_eq!(
+        store.handle_records().len(),
+        persisted_record_count,
+        "persistence must still contain one record per pre-restart Handle Key"
+    );
+    assert_eq!(
+        store.consumed_events().len(),
+        persisted_consumed_event_count,
+        "persistence must still contain one consumed ChainEventRef per pre-restart event"
     );
 
-    // Projections unchanged: sources Ready, derived Pending.
     assert!(matches!(
         host.get_handle_state(&source_a),
         HandleStateView::Ready { .. }
@@ -317,6 +321,11 @@ fn restart_replaying_consumed_events_is_idempotent_by_chain_event_ref() {
         HandleStateView::Ready { .. }
     ));
     assert_eq!(host.get_handle_state(&derived), HandleStateView::Pending);
+    assert_eq!(
+        host.resolve_handle(RequestId([0x03; 32]), &derived),
+        HandleStateView::Pending,
+        "resolve_handle projection must match get_handle_state after replay"
+    );
 }
 
 /// After restore_from_persistence, Resolution Readiness and Internal
@@ -376,7 +385,7 @@ fn restart_resolution_readiness_and_api_state_match_pre_restart_state() {
         "precondition: derived is Ready so readiness must be empty"
     );
 
-    let host = boot_restored_host(&store);
+    let mut host = boot_restored_host(&store);
 
     // All three handles reflect their persisted state after restore.
     assert!(
@@ -390,6 +399,13 @@ fn restart_resolution_readiness_and_api_state_match_pre_restart_state() {
     assert!(
         matches!(host.get_handle_state(&derived), HandleStateView::Ready { .. }),
         "Ready derived must stay Ready after restart"
+    );
+    assert!(
+        matches!(
+            host.resolve_handle(RequestId([0x04; 32]), &derived),
+            HandleStateView::Ready { .. }
+        ),
+        "resolve_handle must return the same Ready projection after restart"
     );
 
     // Resolution Readiness after restart must be empty (derived is already Ready).
@@ -450,7 +466,7 @@ fn restart_tombstoned_before_restart_remains_tombstoned_after_restore() {
     assert_eq!(outcome.cascade_tombstoned, vec![derived]);
 
     // Restore from persistence.
-    let host = boot_restored_host(&store);
+    let mut host = boot_restored_host(&store);
 
     // Normal API: tombstoned handles are Unknown.
     assert_eq!(
@@ -462,6 +478,16 @@ fn restart_tombstoned_before_restart_remains_tombstoned_after_restore() {
         host.get_handle_state(&derived),
         HandleStateView::Unknown,
         "cascade-tombstoned derived must be Unknown after restart"
+    );
+    assert_eq!(
+        host.resolve_handle(RequestId([0x05; 32]), &source_a),
+        HandleStateView::Unknown,
+        "tombstoned source_a must also be Unknown via resolve_handle after restart"
+    );
+    assert_eq!(
+        host.resolve_handle(RequestId([0x06; 32]), &derived),
+        HandleStateView::Unknown,
+        "cascade-tombstoned derived must also be Unknown via resolve_handle after restart"
     );
     assert!(
         matches!(host.get_handle_state(&source_b), HandleStateView::Ready { .. }),
