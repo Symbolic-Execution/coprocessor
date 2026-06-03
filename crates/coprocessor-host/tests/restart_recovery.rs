@@ -15,11 +15,12 @@
 //! - Unknown and tombstoned Handle Keys keep their normal API behavior.
 //! - Tests cover Pending, Ready, Failed, and tombstoned records.
 
+use coprocessor_enclave_runtime::AttestationDigest;
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
-    HandleGraphCore, HandleId, HandleKey, HandleRecord, HandleState, HandleType, ImportedHandle,
-    InMemoryHandlePersistence, IngestionOutcome, MaterializationReceipt, OperationCode,
-    ResolutionReadiness, SystemCiphertextV1,
+    HandleGraphCore, HandleId, HandleKey, HandlePersistence, HandleRecord, HandleState, HandleType,
+    ImportedHandle, InMemoryHandlePersistence, IngestionOutcome, MaterializationReceipt,
+    OperationCode, ResolutionReadiness, SystemCiphertextV1,
 };
 use coprocessor_host::{
     CoprocessorHost, HandleStateFailureCategory, HandleStateView, HostConfig, LifecycleState,
@@ -64,6 +65,7 @@ fn restored_host_serves_ready_record_via_get_handle_state() {
         HandleStateView::Ready {
             system_ciphertext: ciphertext,
             materialization_receipt: receipt,
+            derived_receipt: None,
         }
     );
 }
@@ -281,6 +283,165 @@ fn restored_host_audit_view_exposes_tombstoned_record_with_original_state() {
     );
 }
 
+// ---------- issue #43: receipt rehydration tests ----------
+
+#[test]
+fn restored_host_ready_derived_handle_exposes_structured_receipt_after_restart() {
+    // Build a Ready Derived Handle by materializing it directly using the
+    // encoded receipt bytes (same format as resolve_enclave produces) and
+    // persist through the store.
+    let mut store = InMemoryHandlePersistence::new();
+    let mut before_restart = HandleGraphCore::new();
+
+    let a = handle_key(1, 7, 1);
+    let b = handle_key(1, 7, 2);
+    let derived = handle_key(1, 7, 3);
+    let attestation_digest = AttestationDigest([0x42; 32]);
+
+    record_event(
+        &mut before_restart,
+        &mut store,
+        imported_event(
+            a,
+            HandleType::Suint256,
+            chain_event_ref(1, 1, 1),
+            SystemCiphertextV1(vec![0xA1]),
+            MaterializationReceipt(vec![0xA2]),
+        ),
+    );
+    record_event(
+        &mut before_restart,
+        &mut store,
+        imported_event(
+            b,
+            HandleType::Suint256,
+            chain_event_ref(1, 1, 2),
+            SystemCiphertextV1(vec![0xB1]),
+            MaterializationReceipt(vec![0xB2]),
+        ),
+    );
+    record_event(
+        &mut before_restart,
+        &mut store,
+        derived_event(
+            derived,
+            OperationCode::Add,
+            HandleType::Suint256,
+            vec![a, b],
+            chain_event_ref(1, 2, 1),
+        ),
+    );
+
+    let receipt = derived_receipt(OperationCode::Add, derived, &[a, b], attestation_digest);
+    let ciphertext = SystemCiphertextV1(vec![0xCC; 16]);
+
+    before_restart
+        .materialize_derived_handle_with_persistence(
+            &derived,
+            ciphertext.clone(),
+            receipt,
+            &mut store,
+        )
+        .expect("materialize must succeed");
+
+    // Restore and verify the structured receipt survives rehydration
+    let host = boot_restored_host(&store);
+    let view = host.get_handle_state(&derived);
+
+    let HandleStateView::Ready {
+        derived_receipt, ..
+    } = view
+    else {
+        panic!("expected Ready after rehydration, got {view:?}");
+    };
+    let r = derived_receipt.expect("Derived Handle must have structured receipt after rehydration");
+    assert_eq!(r.operation_code, OperationCode::Add);
+    assert_eq!(r.output_handle_key, derived);
+    assert_eq!(r.input_handle_keys, vec![a, b]);
+    assert_eq!(r.attestation_digest, attestation_digest);
+}
+
+#[test]
+fn restored_host_ready_derived_handle_persistence_contains_no_raw_attestation_doc() {
+    // Assert that the persisted MaterializationReceipt contains only non-secret
+    // evidence (OperationCode + Handle Keys + digest), not raw attestation docs.
+    let mut store = InMemoryHandlePersistence::new();
+    let mut before_restart = HandleGraphCore::new();
+
+    let a = handle_key(1, 7, 1);
+    let b = handle_key(1, 7, 2);
+    let derived = handle_key(1, 7, 3);
+
+    record_event(
+        &mut before_restart,
+        &mut store,
+        imported_event(
+            a,
+            HandleType::Suint256,
+            chain_event_ref(1, 1, 1),
+            SystemCiphertextV1(vec![0xA1]),
+            MaterializationReceipt(vec![0xA2]),
+        ),
+    );
+    record_event(
+        &mut before_restart,
+        &mut store,
+        imported_event(
+            b,
+            HandleType::Suint256,
+            chain_event_ref(1, 1, 2),
+            SystemCiphertextV1(vec![0xB1]),
+            MaterializationReceipt(vec![0xB2]),
+        ),
+    );
+    record_event(
+        &mut before_restart,
+        &mut store,
+        derived_event(
+            derived,
+            OperationCode::Add,
+            HandleType::Suint256,
+            vec![a, b],
+            chain_event_ref(1, 2, 1),
+        ),
+    );
+
+    let attestation_digest = AttestationDigest([0x77; 32]);
+    let receipt = derived_receipt(OperationCode::Add, derived, &[a, b], attestation_digest);
+    let expected_receipt_len = 1 + 60 + 4 + 2 * 60 + 32;
+    assert_eq!(
+        receipt.0.len(),
+        expected_receipt_len,
+        "receipt must be minimal deterministic encoding with no raw attestation blob"
+    );
+
+    before_restart
+        .materialize_derived_handle_with_persistence(
+            &derived,
+            SystemCiphertextV1(vec![0xCC; 16]),
+            receipt,
+            &mut store,
+        )
+        .expect("materialize");
+
+    let restored = store
+        .handle_record(&derived)
+        .expect("persistence must contain the Ready derived record");
+    if let HandleState::Ready {
+        materialization_receipt,
+        ..
+    } = restored.state
+    {
+        assert_eq!(
+            materialization_receipt.0.len(),
+            expected_receipt_len,
+            "persisted receipt must not include raw attestation document or EnclaveCiphertextV1"
+        );
+    } else {
+        panic!("expected Ready state");
+    }
+}
+
 fn boot_restored_host(store: &InMemoryHandlePersistence) -> CoprocessorHost {
     let mut host =
         CoprocessorHost::restore_from_persistence(HostConfig::for_local_development(), store);
@@ -373,6 +534,47 @@ fn derived_event(
         input_handle_keys,
         event_ref,
     })
+}
+
+fn derived_receipt(
+    operation_code: OperationCode,
+    output_handle_key: HandleKey,
+    input_handle_keys: &[HandleKey],
+    attestation_digest: AttestationDigest,
+) -> MaterializationReceipt {
+    let mut bytes = Vec::new();
+    bytes.push(op_code_byte(operation_code));
+    encode_handle_key(&mut bytes, output_handle_key);
+    let input_count =
+        u32::try_from(input_handle_keys.len()).expect("fixture input count exceeds u32::MAX");
+    bytes.extend_from_slice(&input_count.to_be_bytes());
+    for input_handle_key in input_handle_keys {
+        encode_handle_key(&mut bytes, *input_handle_key);
+    }
+    bytes.extend_from_slice(&attestation_digest.0);
+    MaterializationReceipt(bytes)
+}
+
+fn encode_handle_key(bytes: &mut Vec<u8>, handle_key: HandleKey) {
+    bytes.extend_from_slice(&handle_key.chain_id.0.to_be_bytes());
+    bytes.extend_from_slice(&handle_key.contract_address.0);
+    bytes.extend_from_slice(&handle_key.handle_id.0);
+}
+
+fn op_code_byte(operation_code: OperationCode) -> u8 {
+    match operation_code {
+        OperationCode::Add => 1,
+        OperationCode::Sub => 2,
+        OperationCode::Eq => 3,
+        OperationCode::Lt => 4,
+        OperationCode::Lte => 5,
+        OperationCode::Gt => 6,
+        OperationCode::Gte => 7,
+        OperationCode::And => 8,
+        OperationCode::Or => 9,
+        OperationCode::Not => 10,
+        OperationCode::Select => 11,
+    }
 }
 
 fn handle_key(chain_id: u64, contract_seed: u8, handle_seed: u8) -> HandleKey {

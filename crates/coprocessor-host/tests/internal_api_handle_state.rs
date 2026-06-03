@@ -19,7 +19,8 @@
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
     HandleId, HandleKey, HandleRecord, HandleType, ImportedHandle, IngestionOutcome,
-    MaterializationReceipt, OperationCode, SystemCiphertextV1,
+    MaterializationReceipt, OperationCode, PlaintextHandle, PublicPlaintextValue,
+    SystemCiphertextV1,
 };
 use coprocessor_host::{CoprocessorHost, HandleStateFailureCategory, HandleStateView, HostConfig};
 
@@ -55,9 +56,49 @@ fn get_handle_state_returns_ready_with_ciphertext_and_receipt_for_imported_handl
         HandleStateView::Ready {
             system_ciphertext,
             materialization_receipt,
+            derived_receipt,
         } => {
             assert_eq!(system_ciphertext, ciphertext);
             assert_eq!(materialization_receipt, receipt);
+            // Source (Imported) handle: no structured derived receipt
+            assert_eq!(derived_receipt, None);
+        }
+        other => panic!("expected Ready view, got {other:?}"),
+    }
+}
+
+#[test]
+fn get_handle_state_returns_plaintext_source_receipt_without_derived_view() {
+    let mut host = running_host();
+    let key = handle_key(1, 7, 2);
+    let record = ingest(
+        &mut host,
+        ChainEvent::PlaintextHandle(PlaintextHandle {
+            domain_id: DomainId([DEFAULT_DOMAIN; 32]),
+            handle_key: key,
+            handle_type: HandleType::Sbool,
+            public_value: PublicPlaintextValue(vec![0x01]),
+            event_ref: chain_event_ref(1, 1, 2),
+        }),
+    );
+
+    let coprocessor_handle_graph_core::HandleState::Ready {
+        system_ciphertext: expected_ciphertext,
+        materialization_receipt: expected_receipt,
+    } = record.state
+    else {
+        panic!("expected plaintext ingestion to materialize a Ready source handle");
+    };
+
+    match host.get_handle_state(&key) {
+        HandleStateView::Ready {
+            system_ciphertext,
+            materialization_receipt,
+            derived_receipt,
+        } => {
+            assert_eq!(system_ciphertext, expected_ciphertext);
+            assert_eq!(materialization_receipt, expected_receipt);
+            assert_eq!(derived_receipt, None);
         }
         other => panic!("expected Ready view, got {other:?}"),
     }

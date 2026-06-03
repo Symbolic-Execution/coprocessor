@@ -104,6 +104,7 @@ fn repeated_resolve_for_ready_handle_returns_stable_state_without_registering_in
     let expected = HandleStateView::Ready {
         system_ciphertext: ciphertext,
         materialization_receipt: receipt,
+        derived_receipt: None,
     };
 
     let first = host.resolve_handle(request_id(0xA1), &key);
