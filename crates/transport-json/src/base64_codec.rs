@@ -6,13 +6,19 @@
 //! bits in the final group. The error type is intentionally coarse — the
 //! caller only needs to know the payload was malformed, not which byte.
 
+use thiserror::Error;
+
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum Base64DecodeError {
+    #[error("invalid base64 character")]
     InvalidCharacter,
+    #[error("invalid base64 length")]
     InvalidLength,
+    #[error("invalid base64 padding")]
     InvalidPadding,
+    #[error("non-zero tail bits in base64")]
     NonZeroTail,
 }
 

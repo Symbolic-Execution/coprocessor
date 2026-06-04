@@ -28,6 +28,8 @@ pub use coprocessor_ciphertext_binding::{AttestationDigest, DomainId, KeyId};
 pub use coprocessor_handle_graph_core::ChainId;
 pub use coprocessor_transport_json::{HexDecodeError, JsonParseError};
 
+use thiserror::Error;
+
 use coprocessor_transport_json::{decode_hex_lower, decode_hex_lower_variable, parse_object};
 
 const DOMAIN_ID_LEN: usize = 32;
@@ -141,20 +143,25 @@ pub struct MpcConfigExpectations {
 /// match. Distinct from parse errors and backend availability errors so the
 /// host can refuse to schedule work and surface the mismatch without
 /// retrying.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum MpcConfigIncompatibility {
+    #[error("chain_id mismatch: expected {expected:?}, actual {actual:?}")]
     ChainIdMismatch {
         expected: ChainId,
         actual: ChainId,
     },
+    /// DomainId carries [u8; 32] — display only a category label, no bytes.
+    #[error("domain_id mismatch")]
     DomainIdMismatch {
         expected: DomainId,
         actual: DomainId,
     },
+    #[error("suite mismatch: expected {expected:?}, actual {actual:?}")]
     SuiteMismatch {
         expected: MpcSuite,
         actual: MpcSuite,
     },
+    #[error("public key shape mismatch for suite {suite:?}: expected {expected_bytes} bytes, actual {actual_bytes} bytes")]
     PublicKeyShape {
         suite: MpcSuite,
         expected_bytes: usize,
@@ -167,29 +174,25 @@ pub enum MpcConfigIncompatibility {
 /// before any compatibility check runs, so callers can distinguish "the
 /// payload was not a valid MPC config" from "the payload was valid but
 /// disagreed with our expectations".
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum MpcConfigParseError {
     /// The JSON document was malformed or did not have the expected shape.
-    Json(JsonParseError),
+    #[error(transparent)]
+    Json(#[from] JsonParseError),
     /// A hex-encoded field could not be decoded into bytes.
-    Hex(HexDecodeError),
+    /// `#[from]` is on this variant; `InvalidPublicKey` shares the same source
+    /// type and is constructed explicitly.
+    #[error(transparent)]
+    Hex(#[from] HexDecodeError),
     /// The `suite` field carried a value that does not name a known
     /// [`MpcSuite`].
+    #[error("unknown MPC suite name")]
     UnknownSuite,
     /// The `public_key` field was not canonical lower `0x`-prefixed hex.
-    InvalidPublicKey(HexDecodeError),
-}
-
-impl From<JsonParseError> for MpcConfigParseError {
-    fn from(value: JsonParseError) -> Self {
-        Self::Json(value)
-    }
-}
-
-impl From<HexDecodeError> for MpcConfigParseError {
-    fn from(value: HexDecodeError) -> Self {
-        Self::Hex(value)
-    }
+    /// Constructed explicitly (not via `From`) because `HexDecodeError` is
+    /// already the `#[from]` source of the `Hex` variant above.
+    #[error("invalid public key hex")]
+    InvalidPublicKey(#[source] HexDecodeError),
 }
 
 /// Reason an [`MpcConfigSource`] could not produce a payload. Reserved for
@@ -197,9 +200,11 @@ impl From<HexDecodeError> for MpcConfigParseError {
 /// Implementations that hit the endpoint and read a malformed body should
 /// return the body bytes from [`MpcConfigSource::fetch`] and let parsing
 /// surface the shape failure as [`MpcConfigLoadError::Malformed`].
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum MpcSourceError {
     /// The MPC endpoint was unreachable or returned a transient error.
+    /// `detail` is a non-secret transport diagnostic (e.g. OS error string).
+    #[error("MPC endpoint unavailable: {detail}")]
     Unavailable { detail: String },
 }
 
@@ -207,27 +212,19 @@ pub enum MpcSourceError {
 /// failures, malformed payloads, and incompatible payloads are deliberately
 /// kept as separate variants so the host can map each to its own behavior:
 /// retry, alert, or refuse-to-start.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum MpcConfigLoadError {
     /// The MPC endpoint could not be reached. Transient.
+    /// `detail` is a non-secret transport diagnostic.
+    #[error("MPC endpoint unavailable: {detail}")]
     Unavailable { detail: String },
     /// The endpoint replied but the payload was not a valid MPC public
     /// configuration document.
-    Malformed(MpcConfigParseError),
+    #[error("malformed MPC configuration")]
+    Malformed(#[from] MpcConfigParseError),
     /// The payload parsed but did not match the Coprocessor's expectations.
-    Incompatible(MpcConfigIncompatibility),
-}
-
-impl From<MpcConfigParseError> for MpcConfigLoadError {
-    fn from(value: MpcConfigParseError) -> Self {
-        Self::Malformed(value)
-    }
-}
-
-impl From<MpcConfigIncompatibility> for MpcConfigLoadError {
-    fn from(value: MpcConfigIncompatibility) -> Self {
-        Self::Incompatible(value)
-    }
+    #[error("incompatible MPC configuration")]
+    Incompatible(#[from] MpcConfigIncompatibility),
 }
 
 /// Source seam for the MPC public configuration. Implementations carry

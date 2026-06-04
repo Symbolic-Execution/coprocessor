@@ -11,3 +11,4 @@ path = "src/lib.rs"
 coprocessor-ciphertext-binding = { path = "../ciphertext-binding" }
 coprocessor-handle-graph-core = { path = "../handle-graph-core" }
 coprocessor-transport-json = { path = "../transport-json" }
+thiserror = { workspace = true }
