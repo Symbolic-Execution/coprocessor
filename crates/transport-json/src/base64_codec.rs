@@ -18,6 +18,7 @@ use base64::{
     },
     Engine as _,
 };
+use thiserror::Error;
 
 const CANONICAL_STANDARD: GeneralPurpose = GeneralPurpose::new(
     &alphabet::STANDARD,
@@ -26,11 +27,15 @@ const CANONICAL_STANDARD: GeneralPurpose = GeneralPurpose::new(
         .with_decode_allow_trailing_bits(false),
 );
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum Base64DecodeError {
+    #[error("invalid base64 character")]
     InvalidCharacter,
+    #[error("invalid base64 length")]
     InvalidLength,
+    #[error("invalid base64 padding")]
     InvalidPadding,
+    #[error("non-zero tail bits in base64")]
     NonZeroTail,
 }
 

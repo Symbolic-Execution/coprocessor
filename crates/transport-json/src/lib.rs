@@ -583,32 +583,17 @@ fn known_fields() -> &'static [&'static str] {
 // errors into [`CiphertextJsonError`].
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]
 pub enum CiphertextJsonError {
     /// The JSON value did not parse as a single quoted string.
-    Json(JsonParseError),
+    #[error(transparent)]
+    Json(#[from] JsonParseError),
     /// The base64 payload was not valid canonical base64.
-    Base64(base64_codec::Base64DecodeError),
+    #[error(transparent)]
+    Base64(#[from] base64_codec::Base64DecodeError),
     /// The decoded CBOR envelope was malformed or carried mismatched AAD.
-    Envelope(EnvelopeDecodeError),
-}
-
-impl From<JsonParseError> for CiphertextJsonError {
-    fn from(value: JsonParseError) -> Self {
-        Self::Json(value)
-    }
-}
-
-impl From<base64_codec::Base64DecodeError> for CiphertextJsonError {
-    fn from(value: base64_codec::Base64DecodeError) -> Self {
-        Self::Base64(value)
-    }
-}
-
-impl From<EnvelopeDecodeError> for CiphertextJsonError {
-    fn from(value: EnvelopeDecodeError) -> Self {
-        Self::Envelope(value)
-    }
+    #[error(transparent)]
+    Envelope(#[from] EnvelopeDecodeError),
 }
 
 pub use base64_codec::Base64DecodeError;

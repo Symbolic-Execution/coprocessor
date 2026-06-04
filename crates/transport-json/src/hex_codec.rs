@@ -5,23 +5,24 @@
 //! Each error carries the field name so the parent decoder can surface the
 //! failure without inspecting the offending text.
 
+use thiserror::Error;
+
 const PREFIX: &str = "0x";
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum HexDecodeError {
-    MissingPrefix {
-        field: &'static str,
-    },
+    #[error("missing 0x prefix in {field}")]
+    MissingPrefix { field: &'static str },
+    #[error("odd hex length in {field}: {actual_chars} hex chars")]
     OddLength {
         field: &'static str,
         actual_chars: usize,
     },
-    UppercaseDigit {
-        field: &'static str,
-    },
-    InvalidDigit {
-        field: &'static str,
-    },
+    #[error("uppercase hex digit in {field}")]
+    UppercaseDigit { field: &'static str },
+    #[error("invalid hex digit in {field}")]
+    InvalidDigit { field: &'static str },
+    #[error("wrong byte length in {field}: expected {expected}, actual {actual}")]
     WrongByteLength {
         field: &'static str,
         expected: usize,

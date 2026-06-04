@@ -10,38 +10,51 @@
 //! was observed when one is known. They never include payload bytes.
 
 use crate::HexDecodeError;
+use thiserror::Error;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum JsonParseError {
     /// The input was not the expected top-level shape (object or string).
+    #[error("unexpected token: expected {expected}")]
     UnexpectedToken { expected: &'static str },
     /// The input ended before the document was complete.
+    #[error("unexpected end of input: expected {expected}")]
     UnexpectedEndOfInput { expected: &'static str },
     /// The input contained extra non-whitespace characters after the document.
+    #[error("trailing content after JSON document")]
     TrailingContent,
     /// A string used an unsupported feature (escape sequences are not allowed
     /// in transport strings, since payloads are hex or base64).
+    #[error("unsupported string escape in JSON")]
     UnsupportedStringEscape,
     /// A digit-starting number could not be parsed as a canonical unsigned
     /// integer (for example, leading zeros or out of `u64` range).
+    #[error("invalid unsigned number in field {field}")]
     InvalidUnsignedNumber { field: &'static str },
     /// Object had a duplicate key.
+    #[error("duplicate field {field}")]
     DuplicateField { field: &'static str },
     /// Object was missing an expected key.
+    #[error("missing field {field}")]
     MissingField { field: &'static str },
     /// Object had an unexpected key.
+    #[error("unexpected field in JSON object")]
     UnexpectedField,
     /// A field value did not have the expected JSON shape.
+    #[error("wrong shape for field {field}: expected {expected}")]
     FieldShape {
         field: &'static str,
         expected: &'static str,
     },
     /// A field hex string failed to decode.
+    #[error("invalid hex in field {field}")]
     InvalidHex {
         field: &'static str,
+        #[source]
         error: HexDecodeError,
     },
     /// A parsed integer did not fit the field's narrower numeric type.
+    #[error("integer overflow in field {field}: expected {expected}")]
     IntegerOverflow {
         field: &'static str,
         expected: &'static str,
