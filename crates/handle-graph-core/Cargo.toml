@@ -9,3 +9,5 @@ path = "src/lib.rs"
 
 [dependencies]
 coprocessor-ciphertext-binding = { path = "../ciphertext-binding" }
+alloy-sol-types = { workspace = true }
+alloy-primitives = { workspace = true }

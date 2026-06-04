@@ -169,7 +169,6 @@ pub struct ImportedHandle {
     pub handle_key: HandleKey,
     pub handle_type: HandleType,
     pub system_ciphertext: SystemCiphertextV1,
-    pub materialization_receipt: MaterializationReceipt,
     pub event_ref: ChainEventRef,
 }
 
@@ -677,7 +676,10 @@ impl HandleGraphCore {
             handle_type: imported.handle_type,
             state: HandleState::Ready {
                 system_ciphertext: imported.system_ciphertext,
-                materialization_receipt: imported.materialization_receipt,
+                // Imported handles carry no materialization receipt in the
+                // spec ABI; the submitted SystemCiphertextV1 is the ready
+                // source value. The receipt is empty per the spec.
+                materialization_receipt: MaterializationReceipt(Vec::new()),
             },
             event_ref: imported.event_ref,
             is_canonical: true,

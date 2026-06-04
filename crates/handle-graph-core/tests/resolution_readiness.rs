@@ -1,8 +1,8 @@
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
     HandleGraphCore, HandleId, HandleKey, HandleRecord, HandleType, ImportedHandle,
-    IngestionOutcome, MaterializationReceipt, OperationCode, PlaintextHandle, PublicPlaintextValue,
-    ResolutionReadiness, SystemCiphertextV1,
+    IngestionOutcome, OperationCode, PlaintextHandle, PublicPlaintextValue, ResolutionReadiness,
+    SystemCiphertextV1,
 };
 
 const DEFAULT_DOMAIN: u8 = 9;
@@ -347,7 +347,6 @@ fn seed_imported_with_ciphertext(
             handle_key,
             handle_type,
             system_ciphertext,
-            materialization_receipt: MaterializationReceipt(vec![0xEE]),
             event_ref,
         })),
     );

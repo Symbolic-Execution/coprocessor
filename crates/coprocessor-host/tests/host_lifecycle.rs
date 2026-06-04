@@ -8,7 +8,7 @@
 
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DomainId, HandleId, HandleKey, HandleType,
-    ImportedHandle, IngestionOutcome, MaterializationReceipt, SystemCiphertextV1,
+    ImportedHandle, IngestionOutcome, SystemCiphertextV1,
 };
 use coprocessor_host::{
     CoprocessorHost, DependencyName, HostConfig, HostConfigError, HostStartError, LifecycleState,
@@ -127,7 +127,6 @@ fn host_owns_handle_graph_core_and_routes_chain_events_through_it() {
         handle_key: sample_handle_key(),
         handle_type: HandleType::Suint256,
         system_ciphertext: SystemCiphertextV1(vec![0xAA]),
-        materialization_receipt: MaterializationReceipt(vec![0xBB]),
         event_ref: ChainEventRef {
             chain_id: ChainId(1),
             block_number: 100,

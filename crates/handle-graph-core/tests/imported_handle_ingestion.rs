@@ -10,14 +10,12 @@ fn imported_handle_chain_event_creates_ready_canonical_handle_record() {
     let handle_key = handle_key(1, 7, 42);
     let event_ref = chain_event_ref(1, 10, 3);
     let system_ciphertext = SystemCiphertextV1(vec![1, 2, 3]);
-    let materialization_receipt = MaterializationReceipt(vec![4, 5, 6]);
 
     let _ = expect_recorded(core.apply_chain_event(imported_handle_event(
         handle_key,
         event_ref,
         HandleType::Suint256,
         system_ciphertext.clone(),
-        materialization_receipt.clone(),
     )));
 
     let record = core
@@ -28,11 +26,13 @@ fn imported_handle_chain_event_creates_ready_canonical_handle_record() {
     assert_eq!(record.handle_type, HandleType::Suint256);
     assert_eq!(record.event_ref, event_ref);
     assert!(record.is_canonical);
+    // Per spec, imported handles carry an empty materialization receipt;
+    // the SystemCiphertextV1 from the event is the ready source value.
     assert_eq!(
         record.state,
         HandleState::Ready {
             system_ciphertext,
-            materialization_receipt,
+            materialization_receipt: MaterializationReceipt(Vec::new()),
         }
     );
 }
@@ -50,14 +50,12 @@ fn re_consuming_same_chain_event_ref_does_not_replace_imported_handle_record() {
     let handle_key = handle_key(1, 7, 42);
     let event_ref = chain_event_ref(1, 10, 3);
     let original_ciphertext = SystemCiphertextV1(vec![1, 2, 3]);
-    let original_receipt = MaterializationReceipt(vec![4, 5, 6]);
 
     let _ = expect_recorded(core.apply_chain_event(imported_handle_event(
         handle_key,
         event_ref,
         HandleType::Suint256,
         original_ciphertext.clone(),
-        original_receipt.clone(),
     )));
 
     assert!(matches!(
@@ -66,7 +64,6 @@ fn re_consuming_same_chain_event_ref_does_not_replace_imported_handle_record() {
             event_ref,
             HandleType::Suint256,
             SystemCiphertextV1(vec![7, 8, 9]),
-            MaterializationReceipt(vec![10, 11, 12]),
         )),
         IngestionOutcome::Idempotent,
     ));
@@ -76,7 +73,7 @@ fn re_consuming_same_chain_event_ref_does_not_replace_imported_handle_record() {
             .map(|record| &record.state),
         Some(&HandleState::Ready {
             system_ciphertext: original_ciphertext,
-            materialization_receipt: original_receipt,
+            materialization_receipt: MaterializationReceipt(Vec::new()),
         })
     );
 }
@@ -98,7 +95,6 @@ fn handle_key_distinguishes_same_handle_id_across_chain_id_and_contract_address(
             event_ref,
             HandleType::Suint256,
             SystemCiphertextV1(ciphertext),
-            MaterializationReceipt(vec![4]),
         )));
     }
 
@@ -131,14 +127,12 @@ fn imported_handle_event(
     event_ref: ChainEventRef,
     handle_type: HandleType,
     system_ciphertext: SystemCiphertextV1,
-    materialization_receipt: MaterializationReceipt,
 ) -> ChainEvent {
     ChainEvent::ImportedHandle(ImportedHandle {
         domain_id: DomainId(bytes32(9)),
         handle_key,
         handle_type,
         system_ciphertext,
-        materialization_receipt,
         event_ref,
     })
 }

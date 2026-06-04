@@ -44,13 +44,11 @@ fn mixed_source_graph_reaches_resolution_readiness_with_arithmetic_and_compariso
 
     let imported = handle_key(1, 7, 1);
     let imported_ciphertext = SystemCiphertextV1(vec![0xA1, 0xA2]);
-    let imported_receipt = MaterializationReceipt(vec![0xA3]);
     let _ = expect_recorded(core.apply_chain_event(imported_event(
         imported,
         HandleType::Suint256,
         chain_event_ref(1, 1, 1),
         imported_ciphertext.clone(),
-        imported_receipt,
     )));
 
     let plaintext = handle_key(1, 7, 2);
@@ -135,21 +133,18 @@ fn select_scenario_preserves_predicate_when_true_when_false_order_through_readin
         HandleType::Sbool,
         chain_event_ref(1, 1, 30),
         predicate_ciphertext.clone(),
-        MaterializationReceipt(vec![0xEE]),
     )));
     let _ = expect_recorded(core.apply_chain_event(imported_event(
         when_true,
         HandleType::Suint256,
         chain_event_ref(1, 1, 31),
         when_true_ciphertext.clone(),
-        MaterializationReceipt(vec![0xEE]),
     )));
     let _ = expect_recorded(core.apply_chain_event(imported_event(
         when_false,
         HandleType::Suint256,
         chain_event_ref(1, 1, 32),
         when_false_ciphertext.clone(),
-        MaterializationReceipt(vec![0xEE]),
     )));
 
     let select_derived = handle_key(1, 7, 33);
@@ -317,13 +312,11 @@ fn replayed_chain_events_are_idempotent_across_source_and_derived_ingestion() {
     let imported = handle_key(1, 7, 1);
     let imported_event_ref = chain_event_ref(1, 1, 1);
     let imported_ciphertext = SystemCiphertextV1(vec![0xA1]);
-    let imported_receipt = MaterializationReceipt(vec![0xA2]);
     let _ = expect_recorded(core.apply_chain_event(imported_event(
         imported,
         HandleType::Suint256,
         imported_event_ref,
         imported_ciphertext.clone(),
-        imported_receipt.clone(),
     )));
 
     let imported_other = handle_key(1, 7, 2);
@@ -349,7 +342,6 @@ fn replayed_chain_events_are_idempotent_across_source_and_derived_ingestion() {
         HandleType::Suint256,
         imported_event_ref,
         SystemCiphertextV1(vec![0xFF, 0xFF]),
-        MaterializationReceipt(vec![0xFF]),
     ));
     assert!(
         matches!(replay_imported, IngestionOutcome::Idempotent),
@@ -377,7 +369,7 @@ fn replayed_chain_events_are_idempotent_across_source_and_derived_ingestion() {
         record.state,
         HandleState::Ready {
             system_ciphertext: imported_ciphertext,
-            materialization_receipt: imported_receipt,
+            materialization_receipt: MaterializationReceipt(Vec::new()),
         },
         "replay must not overwrite the original Ready payload"
     );
@@ -571,13 +563,11 @@ fn full_graph_lifecycle_combines_ingestion_validation_readiness_and_orphan_disca
     let plaintext_source = handle_key(1, 7, 3);
     let imported_a_event = chain_event_ref(1, 1, 1);
     let imported_a_ciphertext = SystemCiphertextV1(vec![0xA1]);
-    let imported_a_receipt = MaterializationReceipt(vec![0xA2]);
     let _ = expect_recorded(core.apply_chain_event(imported_event(
         imported_a,
         HandleType::Suint256,
         imported_a_event,
         imported_a_ciphertext.clone(),
-        imported_a_receipt,
     )));
     seed_imported(
         &mut core,
@@ -712,7 +702,6 @@ fn seed_imported(
         handle_type,
         event_ref,
         SystemCiphertextV1(vec![0x01]),
-        MaterializationReceipt(vec![0x02]),
     )));
 }
 
@@ -721,14 +710,12 @@ fn imported_event(
     handle_type: HandleType,
     event_ref: ChainEventRef,
     system_ciphertext: SystemCiphertextV1,
-    materialization_receipt: MaterializationReceipt,
 ) -> ChainEvent {
     ChainEvent::ImportedHandle(ImportedHandle {
         domain_id: DomainId(bytes32(DEFAULT_DOMAIN)),
         handle_key,
         handle_type,
         system_ciphertext,
-        materialization_receipt,
         event_ref,
     })
 }

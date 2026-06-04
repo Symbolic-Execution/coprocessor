@@ -16,8 +16,7 @@ use coprocessor_ciphertext_binding::{
 use coprocessor_enclave_runtime::{AttestationDigest, FakeEnclaveRuntime};
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
-    HandleId, HandleKey, HandleType, ImportedHandle, MaterializationReceipt, OperationCode,
-    SystemCiphertextV1,
+    HandleId, HandleKey, HandleType, ImportedHandle, OperationCode, SystemCiphertextV1,
 };
 use coprocessor_host::{
     ChainEventSource, ChainView, ChainViewPoll, CoprocessorHost, EnclaveAttestationConfig,
@@ -655,7 +654,6 @@ fn imported_event(
         handle_key,
         handle_type,
         system_ciphertext,
-        materialization_receipt: MaterializationReceipt(vec![0x01]),
         event_ref: event_ref(block_number, log_index),
     })
 }

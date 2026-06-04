@@ -45,10 +45,9 @@ fn resolve_handle_returns_ready_with_ciphertext_and_receipt_for_imported_handle(
     let mut host = running_host();
     let key = default_handle_key(1);
     let ciphertext = SystemCiphertextV1(vec![0xAA, 0xBB, 0xCC]);
-    let receipt = MaterializationReceipt(vec![0xDD, 0xEE]);
     let expected = HandleStateView::Ready {
         system_ciphertext: ciphertext.clone(),
-        materialization_receipt: receipt.clone(),
+        materialization_receipt: MaterializationReceipt(Vec::new()),
         derived_receipt: None,
     };
     ingest(
@@ -57,7 +56,6 @@ fn resolve_handle_returns_ready_with_ciphertext_and_receipt_for_imported_handle(
             key,
             HandleType::Suint256,
             ciphertext,
-            receipt,
             default_event_ref(1, 1),
         ),
     );
@@ -299,7 +297,6 @@ fn seed_imported(
             handle_key,
             handle_type,
             SystemCiphertextV1(vec![0x01]),
-            MaterializationReceipt(vec![0x02]),
             event_ref,
         ),
     );
@@ -309,7 +306,6 @@ fn imported_event(
     handle_key: HandleKey,
     handle_type: HandleType,
     system_ciphertext: SystemCiphertextV1,
-    materialization_receipt: MaterializationReceipt,
     event_ref: ChainEventRef,
 ) -> ChainEvent {
     ChainEvent::ImportedHandle(ImportedHandle {
@@ -317,7 +313,6 @@ fn imported_event(
         handle_key,
         handle_type,
         system_ciphertext,
-        materialization_receipt,
         event_ref,
     })
 }

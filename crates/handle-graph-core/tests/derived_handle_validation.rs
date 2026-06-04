@@ -1,8 +1,8 @@
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
     FailureReason, HandleGraphCore, HandleId, HandleKey, HandleLineage, HandleRecord, HandleState,
-    HandleType, ImportedHandle, IngestionOutcome, LineageViolation, MaterializationReceipt,
-    OperationCode, OperationViolation, SystemCiphertextV1,
+    HandleType, ImportedHandle, IngestionOutcome, LineageViolation, OperationCode,
+    OperationViolation, SystemCiphertextV1,
 };
 
 const DEFAULT_DOMAIN: u8 = 9;
@@ -1106,7 +1106,6 @@ fn imported_event_owned(
         handle_key,
         handle_type,
         system_ciphertext: SystemCiphertextV1(vec![1]),
-        materialization_receipt: MaterializationReceipt(vec![2]),
         event_ref,
     })
 }

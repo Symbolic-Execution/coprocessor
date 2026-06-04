@@ -29,8 +29,7 @@ use coprocessor_enclave_runtime::{
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
     FailureReason, HandleGraphCore, HandleId, HandleKey, HandleState, HandleType, ImportedHandle,
-    InMemoryHandlePersistence, IngestionOutcome, MaterializationReceipt, OperationCode,
-    SystemCiphertextV1,
+    InMemoryHandlePersistence, IngestionOutcome, OperationCode, SystemCiphertextV1,
 };
 use coprocessor_host::{
     CoprocessorHost, HandleStateFailureCategory, HandleStateView, HostConfig, RetryPolicy,
@@ -582,7 +581,6 @@ fn fail_derived_handle_rejects_non_derived_source_handle() {
         handle_key: key,
         handle_type: HandleType::Suint256,
         system_ciphertext: SystemCiphertextV1(vec![1]),
-        materialization_receipt: MaterializationReceipt(vec![2]),
         event_ref: event_ref(1, 1),
     }));
 
@@ -728,7 +726,6 @@ fn ingest_imported_into_host(
             handle_key,
             handle_type: HandleType::Suint256,
             system_ciphertext: well_formed_system_ciphertext(handle_key, "suint256"),
-            materialization_receipt: MaterializationReceipt(vec![0x02]),
             event_ref: event_ref(block_number, log_index),
         }));
     assert!(matches!(outcome, IngestionOutcome::Recorded(_)));
@@ -766,7 +763,6 @@ fn ingest_pair_and_derived_into_core(
         handle_key: a,
         handle_type: HandleType::Suint256,
         system_ciphertext: well_formed_system_ciphertext(a, "suint256"),
-        materialization_receipt: MaterializationReceipt(vec![1]),
         event_ref: event_ref(1, 1),
     });
     let import_b = ChainEvent::ImportedHandle(ImportedHandle {
@@ -774,7 +770,6 @@ fn ingest_pair_and_derived_into_core(
         handle_key: b,
         handle_type: HandleType::Suint256,
         system_ciphertext: well_formed_system_ciphertext(b, "suint256"),
-        materialization_receipt: MaterializationReceipt(vec![2]),
         event_ref: event_ref(1, 2),
     });
     let derive = ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
@@ -811,7 +806,6 @@ fn ingest_pair_and_derived_into_core_with_persistence(
         handle_key: a,
         handle_type: HandleType::Suint256,
         system_ciphertext: well_formed_system_ciphertext(a, "suint256"),
-        materialization_receipt: MaterializationReceipt(vec![1]),
         event_ref: event_ref(1, 1),
     });
     let import_b = ChainEvent::ImportedHandle(ImportedHandle {
@@ -819,7 +813,6 @@ fn ingest_pair_and_derived_into_core_with_persistence(
         handle_key: b,
         handle_type: HandleType::Suint256,
         system_ciphertext: well_formed_system_ciphertext(b, "suint256"),
-        materialization_receipt: MaterializationReceipt(vec![2]),
         event_ref: event_ref(1, 2),
     });
     let derive = ChainEvent::DerivedHandleOperation(DerivedHandleOperation {

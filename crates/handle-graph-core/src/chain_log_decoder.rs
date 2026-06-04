@@ -1,42 +1,74 @@
 //! Decode raw symVM Event Surface logs into normalized [`ChainEvent`]s.
 //!
-//! The decoder is the only part of the crate that knows the byte layout of
-//! `HandleImportedV1`, `HandleFromPlaintextV1`, and `OperationRequestedV1`
-//! logs. Callers hand it a [`ChainLog`] and receive a [`ChainEvent`] that
-//! [`crate::HandleGraphCore::apply_chain_event`] can consume.
+//! Uses alloy-sol-types to decode Ethereum ABI-encoded logs matching the
+//! canonical symVM Event Surface (`symvm-event-surface.md`). Topic0 is a
+//! keccak256 event signature; topics 1-3 carry indexed fields; `data` is
+//! standard Solidity ABI-encoded event data.
 //!
-//! The decoder does not inspect application calldata or contract state. It
-//! treats `SystemCiphertextV1`, `MaterializationReceipt`, and Public Plaintext
-//! payloads as opaque byte slices.
+//! Topic layout (4 topics per event):
 //!
-//! Wire layout owned by this module (versioned by the `V1` event signatures):
+//! * `topics[0]`: keccak256 event signature hash
+//! * `topics[1]`: indexed `domainId` (bytes32)
+//! * `topics[2]`: indexed `contractAddress` (address, right-aligned in 32 bytes)
+//! * `topics[3]`: indexed `handleId` / `outputHandleId` (bytes32)
 //!
-//! * Each event signature occupies `topics[0]`. The remaining topics carry the
-//!   indexed `DomainId` and the handle being created.
-//! * `data` is a length-prefixed concatenation: every variable-length byte
-//!   payload is preceded by its length as a big-endian `u32`. `HandleType` and
-//!   `OperationCode` are encoded as single bytes; input handle ids are encoded
-//!   as a `u32` count followed by that many 32-byte handle ids in order.
+//! Data layout per event:
+//!
+//! * `HandleImportedV1`: ABI-encoded `(uint8 handleType, bytes systemCiphertext)`
+//! * `HandleFromPlaintextV1`: ABI-encoded `(uint8 handleType, bytes32 plaintext)`
+//! * `OperationRequestedV1`: ABI-encoded `(uint8 outputType, uint8 operation, bytes32[] inputHandles)`
+//!
+//! HandleType discriminants are 1-based (Suint256=1, Sbool=2).
+//! OperationCode discriminants are 1-based (Add=1 .. Select=11).
 //!
 //! Input handle ids in `OperationRequestedV1` are decoded into `HandleKey`s
-//! against the chain id and contract address of the emitting log: symVM scopes
-//! handles to the contract that expresses them, so operation inputs share the
-//! same `(ChainId, ContractAddress)` as the output Handle Key.
+//! using the chain id from the monitored log and the contract address from
+//! topic2, not the log emitter address.
+
+use alloy_primitives::B256;
+use alloy_sol_types::{sol, SolEvent};
 
 use crate::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
-    HandleId, HandleKey, HandleType, ImportedHandle, MaterializationReceipt, OperationCode,
-    PlaintextHandle, PublicPlaintextValue, SystemCiphertextV1,
+    HandleId, HandleKey, HandleType, ImportedHandle, OperationCode, PlaintextHandle,
+    PublicPlaintextValue, SystemCiphertextV1,
 };
 
-/// Identifies a `HandleImportedV1` event in `topics[0]`.
-pub const HANDLE_IMPORTED_V1_SIGNATURE: [u8; 32] = signature_bytes(b"HandleImportedV1");
+sol! {
+    event HandleImportedV1(
+        bytes32 indexed domainId,
+        address indexed contractAddress,
+        bytes32 indexed handleId,
+        uint8 handleType,
+        bytes systemCiphertext
+    );
 
-/// Identifies a `HandleFromPlaintextV1` event in `topics[0]`.
-pub const HANDLE_FROM_PLAINTEXT_V1_SIGNATURE: [u8; 32] = signature_bytes(b"HandleFromPlaintextV1");
+    event HandleFromPlaintextV1(
+        bytes32 indexed domainId,
+        address indexed contractAddress,
+        bytes32 indexed handleId,
+        uint8 handleType,
+        bytes32 plaintext
+    );
 
-/// Identifies an `OperationRequestedV1` event in `topics[0]`.
-pub const OPERATION_REQUESTED_V1_SIGNATURE: [u8; 32] = signature_bytes(b"OperationRequestedV1");
+    event OperationRequestedV1(
+        bytes32 indexed domainId,
+        address indexed contractAddress,
+        bytes32 indexed outputHandleId,
+        uint8 outputType,
+        uint8 operation,
+        bytes32[] inputHandles
+    );
+}
+
+/// keccak256 signature hash for `HandleImportedV1`.
+pub const HANDLE_IMPORTED_V1_SIGNATURE: [u8; 32] = HandleImportedV1::SIGNATURE_HASH.0;
+
+/// keccak256 signature hash for `HandleFromPlaintextV1`.
+pub const HANDLE_FROM_PLAINTEXT_V1_SIGNATURE: [u8; 32] = HandleFromPlaintextV1::SIGNATURE_HASH.0;
+
+/// keccak256 signature hash for `OperationRequestedV1`.
+pub const OPERATION_REQUESTED_V1_SIGNATURE: [u8; 32] = OperationRequestedV1::SIGNATURE_HASH.0;
 
 /// Raw symVM event surface log, together with its chain metadata. This is the
 /// input domain for [`decode_chain_log`].
@@ -61,24 +93,24 @@ pub enum ChainLogDecodeError {
     EmptyTopics,
     /// `topics[0]` did not match a known symVM event signature.
     UnknownEventSignature([u8; 32]),
-    /// The number of topics did not match the layout of the matched event.
+    /// The number of topics did not match the layout of the matched event
+    /// (all V1 events require exactly 4 topics).
     UnexpectedTopicCount {
         signature: [u8; 32],
         expected: usize,
         actual: usize,
     },
-    /// `data` ended before the layout demanded.
-    TruncatedData { needed: usize, available: usize },
-    /// `data` carried more bytes than the layout consumed.
-    TrailingData { unused: usize },
+    /// ABI decoding of the log data failed. Payload bytes are not included
+    /// to avoid leaking ciphertext or plaintext content in error surfaces.
+    MalformedAbiData,
     /// The encoded `OperationCode` byte did not match a known discriminant.
     UnknownOperationCode(u8),
     /// The encoded `HandleType` byte did not match a known discriminant.
     UnknownHandleType(u8),
 }
 
-/// Decode a [`ChainLog`] into a [`ChainEvent`]. The decoder dispatches on
-/// `topics[0]` and validates that every byte of `data` is consumed.
+/// Decode a [`ChainLog`] into a [`ChainEvent`]. Dispatches on `topics[0]` and
+/// validates the ABI layout before mapping to domain types.
 pub fn decode_chain_log(log: &ChainLog) -> Result<ChainEvent, ChainLogDecodeError> {
     let signature = *log.topics.first().ok_or(ChainLogDecodeError::EmptyTopics)?;
     let event_ref = chain_event_ref(log);
@@ -90,23 +122,48 @@ pub fn decode_chain_log(log: &ChainLog) -> Result<ChainEvent, ChainLogDecodeErro
     }
 }
 
+fn expect_four_topics(log: &ChainLog, signature: [u8; 32]) -> Result<(), ChainLogDecodeError> {
+    if log.topics.len() != 4 {
+        return Err(ChainLogDecodeError::UnexpectedTopicCount {
+            signature,
+            expected: 4,
+            actual: log.topics.len(),
+        });
+    }
+    Ok(())
+}
+
+fn topics_as_b256(log: &ChainLog) -> Vec<B256> {
+    log.topics.iter().map(|t| B256::from(*t)).collect()
+}
+
+fn decode_exact_event<E: SolEvent>(log: &ChainLog) -> Result<E, ChainLogDecodeError> {
+    let topics = topics_as_b256(log);
+    let decoded = E::decode_raw_log_validate(&topics, &log.data)
+        .map_err(|_| ChainLogDecodeError::MalformedAbiData)?;
+    if decoded.encode_data() != log.data {
+        return Err(ChainLogDecodeError::MalformedAbiData);
+    }
+    Ok(decoded)
+}
+
 fn decode_imported(
     log: &ChainLog,
     event_ref: ChainEventRef,
 ) -> Result<ChainEvent, ChainLogDecodeError> {
-    let (domain_id, handle_id) = expect_source_handle_topics(log, HANDLE_IMPORTED_V1_SIGNATURE)?;
-    let mut cursor = Cursor::new(&log.data);
-    let handle_type = cursor.read_handle_type()?;
-    let system_ciphertext = SystemCiphertextV1(cursor.read_length_prefixed_bytes()?.to_vec());
-    let materialization_receipt =
-        MaterializationReceipt(cursor.read_length_prefixed_bytes()?.to_vec());
-    cursor.expect_consumed()?;
+    expect_four_topics(log, HANDLE_IMPORTED_V1_SIGNATURE)?;
+    let decoded = decode_exact_event::<HandleImportedV1>(log)?;
+    let handle_type = handle_type_from_byte(decoded.handleType)?;
+    let contract_address = ContractAddress(decoded.contractAddress.0 .0);
     Ok(ChainEvent::ImportedHandle(ImportedHandle {
-        domain_id,
-        handle_key: handle_key_from_log(log, handle_id),
+        domain_id: DomainId(decoded.domainId.0),
+        handle_key: HandleKey {
+            chain_id: log.chain_id,
+            contract_address,
+            handle_id: HandleId(decoded.handleId.0),
+        },
         handle_type,
-        system_ciphertext,
-        materialization_receipt,
+        system_ciphertext: SystemCiphertextV1(decoded.systemCiphertext.to_vec()),
         event_ref,
     }))
 }
@@ -115,17 +172,19 @@ fn decode_plaintext(
     log: &ChainLog,
     event_ref: ChainEventRef,
 ) -> Result<ChainEvent, ChainLogDecodeError> {
-    let (domain_id, handle_id) =
-        expect_source_handle_topics(log, HANDLE_FROM_PLAINTEXT_V1_SIGNATURE)?;
-    let mut cursor = Cursor::new(&log.data);
-    let handle_type = cursor.read_handle_type()?;
-    let public_value = PublicPlaintextValue(cursor.read_length_prefixed_bytes()?.to_vec());
-    cursor.expect_consumed()?;
+    expect_four_topics(log, HANDLE_FROM_PLAINTEXT_V1_SIGNATURE)?;
+    let decoded = decode_exact_event::<HandleFromPlaintextV1>(log)?;
+    let handle_type = handle_type_from_byte(decoded.handleType)?;
+    let contract_address = ContractAddress(decoded.contractAddress.0 .0);
     Ok(ChainEvent::PlaintextHandle(PlaintextHandle {
-        domain_id,
-        handle_key: handle_key_from_log(log, handle_id),
+        domain_id: DomainId(decoded.domainId.0),
+        handle_key: HandleKey {
+            chain_id: log.chain_id,
+            contract_address,
+            handle_id: HandleId(decoded.handleId.0),
+        },
         handle_type,
-        public_value,
+        public_value: PublicPlaintextValue(decoded.plaintext.0.to_vec()),
         event_ref,
     }))
 }
@@ -134,49 +193,32 @@ fn decode_operation(
     log: &ChainLog,
     event_ref: ChainEventRef,
 ) -> Result<ChainEvent, ChainLogDecodeError> {
-    let (domain_id, output_handle_id) =
-        expect_source_handle_topics(log, OPERATION_REQUESTED_V1_SIGNATURE)?;
-    let mut cursor = Cursor::new(&log.data);
-    let operation_code = cursor.read_operation_code()?;
-    let output_handle_type = cursor.read_handle_type()?;
-    let input_count = cursor.read_u32()? as usize;
-    let mut input_handle_keys = Vec::new();
-    for _ in 0..input_count {
-        let raw = cursor.read_fixed::<32>()?;
-        input_handle_keys.push(handle_key_from_log(log, HandleId(raw)));
-    }
-    cursor.expect_consumed()?;
+    expect_four_topics(log, OPERATION_REQUESTED_V1_SIGNATURE)?;
+    let decoded = decode_exact_event::<OperationRequestedV1>(log)?;
+    let output_handle_type = handle_type_from_byte(decoded.outputType)?;
+    let operation_code = operation_code_from_byte(decoded.operation)?;
+    let contract_address = ContractAddress(decoded.contractAddress.0 .0);
+    let input_handle_keys = decoded
+        .inputHandles
+        .iter()
+        .map(|h| HandleKey {
+            chain_id: log.chain_id,
+            contract_address,
+            handle_id: HandleId(h.0),
+        })
+        .collect();
     Ok(ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
-        domain_id,
-        handle_key: handle_key_from_log(log, output_handle_id),
+        domain_id: DomainId(decoded.domainId.0),
+        handle_key: HandleKey {
+            chain_id: log.chain_id,
+            contract_address,
+            handle_id: HandleId(decoded.outputHandleId.0),
+        },
         operation_code,
         output_handle_type,
         input_handle_keys,
         event_ref,
     }))
-}
-
-/// All three V1 events carry `topics = [signature, domain_id, handle_id]`.
-fn expect_source_handle_topics(
-    log: &ChainLog,
-    signature: [u8; 32],
-) -> Result<(DomainId, HandleId), ChainLogDecodeError> {
-    if log.topics.len() != 3 {
-        return Err(ChainLogDecodeError::UnexpectedTopicCount {
-            signature,
-            expected: 3,
-            actual: log.topics.len(),
-        });
-    }
-    Ok((DomainId(log.topics[1]), HandleId(log.topics[2])))
-}
-
-fn handle_key_from_log(log: &ChainLog, handle_id: HandleId) -> HandleKey {
-    HandleKey {
-        chain_id: log.chain_id,
-        contract_address: log.contract_address,
-        handle_id,
-    }
 }
 
 fn chain_event_ref(log: &ChainLog) -> ChainEventRef {
@@ -189,110 +231,29 @@ fn chain_event_ref(log: &ChainLog) -> ChainEventRef {
     }
 }
 
-/// Byte cursor over a log's `data` field. Tracks position so the decoder can
-/// report `TruncatedData` and `TrailingData` precisely.
-struct Cursor<'a> {
-    bytes: &'a [u8],
-    pos: usize,
-}
-
-impl<'a> Cursor<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, pos: 0 }
-    }
-
-    fn read_fixed<const N: usize>(&mut self) -> Result<[u8; N], ChainLogDecodeError> {
-        let slice = self.read_slice(N)?;
-        let mut buf = [0u8; N];
-        buf.copy_from_slice(slice);
-        Ok(buf)
-    }
-
-    fn read_u8(&mut self) -> Result<u8, ChainLogDecodeError> {
-        Ok(self.read_slice(1)?[0])
-    }
-
-    fn read_u32(&mut self) -> Result<u32, ChainLogDecodeError> {
-        Ok(u32::from_be_bytes(self.read_fixed::<4>()?))
-    }
-
-    fn read_slice(&mut self, n: usize) -> Result<&'a [u8], ChainLogDecodeError> {
-        let end = self.pos.checked_add(n).ok_or(self.truncated_data(n))?;
-        if end > self.bytes.len() {
-            return Err(self.truncated_data(n));
-        }
-        let slice = &self.bytes[self.pos..end];
-        self.pos = end;
-        Ok(slice)
-    }
-
-    fn read_length_prefixed_bytes(&mut self) -> Result<&'a [u8], ChainLogDecodeError> {
-        let len = self.read_u32()? as usize;
-        self.read_slice(len)
-    }
-
-    fn read_handle_type(&mut self) -> Result<HandleType, ChainLogDecodeError> {
-        let byte = self.read_u8()?;
-        handle_type_from_byte(byte)
-    }
-
-    fn read_operation_code(&mut self) -> Result<OperationCode, ChainLogDecodeError> {
-        let byte = self.read_u8()?;
-        operation_code_from_byte(byte)
-    }
-
-    fn expect_consumed(&self) -> Result<(), ChainLogDecodeError> {
-        if self.pos == self.bytes.len() {
-            Ok(())
-        } else {
-            Err(ChainLogDecodeError::TrailingData {
-                unused: self.bytes.len() - self.pos,
-            })
-        }
-    }
-
-    fn truncated_data(&self, needed: usize) -> ChainLogDecodeError {
-        ChainLogDecodeError::TruncatedData {
-            needed,
-            available: self.bytes.len().saturating_sub(self.pos),
-        }
-    }
-}
-
+/// 1-based per spec: Suint256=1, Sbool=2. Rejects 0 and values >= 3.
 fn handle_type_from_byte(byte: u8) -> Result<HandleType, ChainLogDecodeError> {
     match byte {
-        0 => Ok(HandleType::Suint256),
-        1 => Ok(HandleType::Sbool),
+        1 => Ok(HandleType::Suint256),
+        2 => Ok(HandleType::Sbool),
         other => Err(ChainLogDecodeError::UnknownHandleType(other)),
     }
 }
 
+/// 1-based per spec: Add=1 .. Select=11. Rejects 0 and values >= 12.
 fn operation_code_from_byte(byte: u8) -> Result<OperationCode, ChainLogDecodeError> {
     match byte {
-        0 => Ok(OperationCode::Add),
-        1 => Ok(OperationCode::Sub),
-        2 => Ok(OperationCode::Eq),
-        3 => Ok(OperationCode::Lt),
-        4 => Ok(OperationCode::Lte),
-        5 => Ok(OperationCode::Gt),
-        6 => Ok(OperationCode::Gte),
-        7 => Ok(OperationCode::And),
-        8 => Ok(OperationCode::Or),
-        9 => Ok(OperationCode::Not),
-        10 => Ok(OperationCode::Select),
+        1 => Ok(OperationCode::Add),
+        2 => Ok(OperationCode::Sub),
+        3 => Ok(OperationCode::Eq),
+        4 => Ok(OperationCode::Lt),
+        5 => Ok(OperationCode::Lte),
+        6 => Ok(OperationCode::Gt),
+        7 => Ok(OperationCode::Gte),
+        8 => Ok(OperationCode::And),
+        9 => Ok(OperationCode::Or),
+        10 => Ok(OperationCode::Not),
+        11 => Ok(OperationCode::Select),
         other => Err(ChainLogDecodeError::UnknownOperationCode(other)),
     }
-}
-
-/// Build a deterministic 32-byte signature from an ASCII event name. The name
-/// fills the prefix; trailing bytes are zero. These constants live here so the
-/// decoder owns the on-chain encoding contract end to end.
-const fn signature_bytes(name: &[u8]) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    let mut i = 0;
-    while i < name.len() && i < 32 {
-        out[i] = name[i];
-        i += 1;
-    }
-    out
 }
