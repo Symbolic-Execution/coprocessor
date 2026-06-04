@@ -241,6 +241,60 @@ fn parse_rejects_unexpected_extra_field() {
 }
 
 #[test]
+fn parse_rejects_top_level_non_object() {
+    let err = parse_mpc_public_config("[]").unwrap_err();
+
+    assert!(matches!(
+        err,
+        MpcConfigParseError::Json(JsonParseError::UnexpectedToken { expected: "object" })
+    ));
+}
+
+#[test]
+fn parse_rejects_wrong_shape_for_string_field_with_field_name() {
+    let payload = build_json(&[
+        ("chain_id", JsonValue::Uint(1)),
+        ("domain_id", JsonValue::Uint(1)),
+        ("active_key_id", JsonValue::Str(&hex32(0x22))),
+        ("suite", JsonValue::Str("bls12-381-g1")),
+        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
+    ]);
+
+    let err = parse_mpc_public_config(&payload).unwrap_err();
+
+    assert!(matches!(
+        err,
+        MpcConfigParseError::Json(JsonParseError::FieldShape {
+            field: "domain_id",
+            expected: "string",
+        })
+    ));
+}
+
+#[test]
+fn parse_rejects_wrong_shape_for_chain_id_with_field_name() {
+    let payload = build_json(&[
+        ("chain_id", JsonValue::Str("not-a-number")),
+        ("domain_id", JsonValue::Str(&hex32(0x11))),
+        ("active_key_id", JsonValue::Str(&hex32(0x22))),
+        ("suite", JsonValue::Str("bls12-381-g1")),
+        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
+    ]);
+
+    let err = parse_mpc_public_config(&payload).unwrap_err();
+
+    assert!(matches!(
+        err,
+        MpcConfigParseError::Json(JsonParseError::FieldShape {
+            field: "chain_id",
+            expected: "unsigned integer",
+        })
+    ));
+}
+
+#[test]
 fn parse_rejects_invalid_hex_digit_in_domain_id() {
     let bad_domain = "0x".to_string() + &"zz".repeat(32);
     let payload = build_json(&[
@@ -257,6 +311,26 @@ fn parse_rejects_invalid_hex_digit_in_domain_id() {
     assert!(matches!(
         err,
         MpcConfigParseError::Hex(HexDecodeError::InvalidDigit { field: "domain_id" })
+    ));
+}
+
+#[test]
+fn parse_rejects_escape_sequence_in_hex_field_before_hex_validation() {
+    let escaped_domain = format!("0\\u0078{}", "11".repeat(32));
+    let payload = build_json(&[
+        ("chain_id", JsonValue::Uint(1)),
+        ("domain_id", JsonValue::Str(&escaped_domain)),
+        ("active_key_id", JsonValue::Str(&hex32(0x22))),
+        ("suite", JsonValue::Str("bls12-381-g1")),
+        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
+    ]);
+
+    let err = parse_mpc_public_config(&payload).unwrap_err();
+
+    assert!(matches!(
+        err,
+        MpcConfigParseError::Json(JsonParseError::UnsupportedStringEscape)
     ));
 }
 
