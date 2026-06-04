@@ -26,6 +26,8 @@ pub use coprocessor_ciphertext_binding::{
 };
 pub use coprocessor_handle_graph_core::ChainId;
 
+use thiserror::Error;
+
 /// One MPC To-Enclave Transformation request. The host populates this from
 /// the [`ResolutionTask`](coprocessor_ciphertext_binding) facts together with
 /// the attested Enclave key, then asks the [`MpcToEnclaveSource`] to perform
@@ -73,13 +75,15 @@ pub enum MpcToEnclaveResponse {
 /// Reasons the [`MpcToEnclaveSource`] seam itself failed before producing a
 /// protocol response. Distinct from the response variants so the client can
 /// surface a network failure separately from an MPC protocol decision.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum MpcSourceError {
     /// The MPC endpoint was unreachable or returned a transient error.
     /// `detail` is non-secret diagnostic context the host may log.
+    #[error("MPC endpoint unavailable: {detail}")]
     Unavailable { detail: String },
     /// The MPC endpoint replied but the reply could not be parsed as any
     /// known protocol response.
+    #[error("malformed MPC response")]
     MalformedResponse,
 }
 
@@ -100,21 +104,26 @@ pub trait MpcToEnclaveSource {
 /// ciphertext binding, and invalid attestation. They stay distinct so the
 /// host can map each to its own response code and retry policy without
 /// re-parsing diagnostic strings.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum ToEnclaveTransformationError {
     /// Transient transport failure. The host may retry while its retry
     /// policy allows it.
+    #[error("MPC endpoint unavailable: {detail}")]
     Unavailable { detail: String },
     /// MPC replied but the reply did not parse as a known response.
+    #[error("malformed MPC response")]
     MalformedResponse,
     /// MPC rejected the request because the caller's authorization was
     /// invalid.
+    #[error("unauthorized")]
     Unauthorized,
     /// MPC rejected the request because the [`SystemCiphertextV1`] AAD did
     /// not match the request facts.
+    #[error("invalid binding")]
     InvalidBinding,
     /// MPC rejected the request because the Attestation did not bind the
     /// enclave public key to an approved Enclave Measurement.
+    #[error("invalid attestation")]
     InvalidAttestation,
 }
 

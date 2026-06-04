@@ -11,6 +11,9 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 [[package]]
 name = "coprocessor-ciphertext-binding"
 version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
 
 [[package]]
 name = "coprocessor-enclave-runtime"
@@ -18,6 +21,7 @@ version = "0.1.0"
 dependencies = [
  "coprocessor-ciphertext-binding",
  "coprocessor-handle-graph-core",
+ "thiserror",
 ]
 
 [[package]]
@@ -25,6 +29,7 @@ name = "coprocessor-handle-graph-core"
 version = "0.1.0"
 dependencies = [
  "coprocessor-ciphertext-binding",
+ "thiserror",
 ]
 
 [[package]]
@@ -36,6 +41,7 @@ dependencies = [
  "coprocessor-handle-graph-core",
  "coprocessor-mpc-client",
  "coprocessor-nitro-enclave",
+ "thiserror",
 ]
 
 [[package]]
@@ -44,6 +50,7 @@ version = "0.1.0"
 dependencies = [
  "coprocessor-ciphertext-binding",
  "coprocessor-handle-graph-core",
+ "thiserror",
 ]
 
 [[package]]
@@ -53,6 +60,7 @@ dependencies = [
  "coprocessor-ciphertext-binding",
  "coprocessor-handle-graph-core",
  "coprocessor-transport-json",
+ "thiserror",
 ]
 
 [[package]]
@@ -60,6 +68,7 @@ name = "coprocessor-nitro-enclave"
 version = "0.1.0"
 dependencies = [
  "coprocessor-ciphertext-binding",
+ "thiserror",
 ]
 
 [[package]]
@@ -155,6 +164,26 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "thiserror"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
+dependencies = [
+ "thiserror-impl",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

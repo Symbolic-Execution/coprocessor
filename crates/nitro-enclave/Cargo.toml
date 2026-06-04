@@ -9,3 +9,4 @@ path = "src/lib.rs"
 
 [dependencies]
 coprocessor-ciphertext-binding = { path = "../ciphertext-binding" }
+thiserror.workspace = true

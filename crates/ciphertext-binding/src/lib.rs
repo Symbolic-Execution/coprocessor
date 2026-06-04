@@ -16,6 +16,8 @@
 //! See the repository-level `docs/cbor-spike-decision.md` for the full
 //! rationale.
 
+use thiserror::Error;
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct DomainId(pub [u8; 32]);
 
@@ -125,36 +127,42 @@ pub enum CiphertextBindingAad {
     Reader(ReaderAadV1),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum AadDecodeError {
+    #[error("malformed AAD")]
     Malformed,
+    #[error("non-canonical AAD encoding")]
     NonCanonicalEncoding,
+    #[error("trailing bytes after AAD payload")]
     TrailingBytes,
+    #[error("unknown AAD kind discriminant {0}")]
     UnknownKind(u64),
-    WrongKind {
-        expected: AadKind,
-        actual: AadKind,
-    },
+    #[error("wrong AAD kind: expected {expected:?}, actual {actual:?}")]
+    WrongKind { expected: AadKind, actual: AadKind },
+    #[error("wrong AAD length for {kind:?}: expected {expected}, actual {actual}")]
     WrongLength {
         kind: AadKind,
         expected: usize,
         actual: usize,
     },
+    #[error("wrong field type in {kind:?} for {field}: expected {expected}")]
     WrongFieldType {
         kind: AadKind,
         field: &'static str,
         expected: &'static str,
     },
+    #[error(
+        "wrong byte-string length in {kind:?} for {field}: expected {expected}, actual {actual}"
+    )]
     WrongByteStringLength {
         kind: AadKind,
         field: &'static str,
         expected: usize,
         actual: usize,
     },
-    InvalidUtf8 {
-        kind: AadKind,
-        field: &'static str,
-    },
+    #[error("invalid utf-8 in {kind:?} for {field}")]
+    InvalidUtf8 { kind: AadKind, field: &'static str },
+    #[error("AAD version overflow: {0}")]
     VersionOverflow(u64),
 }
 
@@ -189,37 +197,37 @@ impl EnvelopeKind {
 
 const ENVELOPE_ARRAY_LENGTH: usize = 4;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum EnvelopeDecodeError {
-    Malformed {
-        envelope: EnvelopeKind,
-    },
-    NonCanonicalEncoding {
-        envelope: EnvelopeKind,
-    },
-    TrailingBytes {
-        envelope: EnvelopeKind,
-    },
+    #[error("malformed {envelope:?} envelope")]
+    Malformed { envelope: EnvelopeKind },
+    #[error("non-canonical encoding in {envelope:?} envelope")]
+    NonCanonicalEncoding { envelope: EnvelopeKind },
+    #[error("trailing bytes after {envelope:?} envelope")]
+    TrailingBytes { envelope: EnvelopeKind },
+    #[error("wrong {envelope:?} envelope length: expected {expected}, actual {actual}")]
     WrongLength {
         envelope: EnvelopeKind,
         expected: usize,
         actual: usize,
     },
+    #[error("wrong field type in {envelope:?} for {field}: expected {expected}")]
     WrongFieldType {
         envelope: EnvelopeKind,
         field: &'static str,
         expected: &'static str,
     },
-    VersionOverflow {
-        envelope: EnvelopeKind,
-        value: u64,
-    },
+    #[error("version overflow in {envelope:?} envelope: {value}")]
+    VersionOverflow { envelope: EnvelopeKind, value: u64 },
+    #[error("AAD binding mismatch in {envelope:?} envelope: actual {actual:?}")]
     AadBindingMismatch {
         envelope: EnvelopeKind,
         actual: AadKind,
     },
+    #[error("failed to decode AAD for {envelope:?} envelope: {error}")]
     AadDecode {
         envelope: EnvelopeKind,
+        #[source]
         error: AadDecodeError,
     },
 }

@@ -281,4 +281,10 @@ fn parse_rejects_public_key_with_odd_hex_length() {
             ..
         })
     ));
+
+    let rendered = format!("{err}");
+    assert!(
+        !rendered.contains(&odd_key),
+        "parse error display must not include raw public_key bytes: {rendered}"
+    );
 }

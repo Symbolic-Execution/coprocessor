@@ -28,6 +28,7 @@ use crate::{
     HandleId, HandleKey, HandleType, ImportedHandle, MaterializationReceipt, OperationCode,
     PlaintextHandle, PublicPlaintextValue, SystemCiphertextV1,
 };
+use thiserror::Error;
 
 /// Identifies a `HandleImportedV1` event in `topics[0]`.
 pub const HANDLE_IMPORTED_V1_SIGNATURE: [u8; 32] = signature_bytes(b"HandleImportedV1");
@@ -55,25 +56,32 @@ pub struct ChainLog {
 /// Why a [`ChainLog`] could not be turned into a [`ChainEvent`]. Malformed or
 /// unknown logs are surfaced as errors so callers can drop them without
 /// polluting the Handle Graph.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum ChainLogDecodeError {
     /// Log carried no topics, so the event signature is missing.
+    #[error("empty topics")]
     EmptyTopics,
     /// `topics[0]` did not match a known symVM event signature.
+    #[error("unknown event signature: {0:?}")]
     UnknownEventSignature([u8; 32]),
     /// The number of topics did not match the layout of the matched event.
+    #[error("unexpected topic count for {signature:?}: expected {expected}, actual {actual}")]
     UnexpectedTopicCount {
         signature: [u8; 32],
         expected: usize,
         actual: usize,
     },
     /// `data` ended before the layout demanded.
+    #[error("truncated data: needed {needed}, available {available}")]
     TruncatedData { needed: usize, available: usize },
     /// `data` carried more bytes than the layout consumed.
+    #[error("trailing data: unused {unused}")]
     TrailingData { unused: usize },
     /// The encoded `OperationCode` byte did not match a known discriminant.
+    #[error("unknown operation code: {0}")]
     UnknownOperationCode(u8),
     /// The encoded `HandleType` byte did not match a known discriminant.
+    #[error("unknown handle type: {0}")]
     UnknownHandleType(u8),
 }
 
