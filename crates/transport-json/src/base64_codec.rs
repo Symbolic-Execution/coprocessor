@@ -10,7 +10,6 @@
 //! canonical configuration so the rejection invariants do not depend on a
 //! pre-built engine's defaults.
 
-use thiserror::Error;
 use base64::{
     alphabet,
     engine::{
@@ -19,6 +18,7 @@ use base64::{
     },
     Engine as _,
 };
+use thiserror::Error;
 
 const CANONICAL_STANDARD: GeneralPurpose = GeneralPurpose::new(
     &alphabet::STANDARD,

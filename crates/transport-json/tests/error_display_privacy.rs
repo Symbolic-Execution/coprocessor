@@ -3,7 +3,33 @@
 //! Verifies that newly derived Display impls contain only category labels,
 //! field names, and counts — never raw byte payloads or secret material.
 
-use coprocessor_transport_json::{Base64DecodeError, HexDecodeError, JsonParseError};
+use coprocessor_transport_json::{
+    Base64DecodeError, CiphertextJsonError, HexDecodeError, JsonParseError,
+};
+
+const FORBIDDEN_DISPLAY_FRAGMENTS: &[&str] = &[
+    "0xaa",
+    "0xbb",
+    "0xcc",
+    "aaaa",
+    "bbbb",
+    "plaintext",
+    "private_key",
+    "wrapped_key",
+    "decrypted",
+    "reader_secret",
+];
+
+fn assert_display_is_non_secret(label: &str, display: &str) {
+    assert!(!display.is_empty(), "{label} display must be non-empty");
+    let normalized = display.to_ascii_lowercase();
+    for fragment in FORBIDDEN_DISPLAY_FRAGMENTS {
+        assert!(
+            !normalized.contains(fragment),
+            "{label} display must not contain '{fragment}': {display:?}"
+        );
+    }
+}
 
 // ---------------------------------------------------------------------------
 // HexDecodeError display must name the field and error class, not raw bytes.
@@ -28,15 +54,7 @@ fn hex_decode_error_display_contains_field_name_not_bytes() {
 
     for err in &cases {
         let display = format!("{}", err);
-        assert!(!display.is_empty(), "HexDecodeError display must be non-empty for {err:?}");
-        // Must not include raw hex content — only field names and category labels.
-        const FORBIDDEN_BYTES: &[&str] = &["0xaa", "0xbb", "0xcc", "0xdd"];
-        for word in FORBIDDEN_BYTES {
-            assert!(
-                !display.to_lowercase().contains(word),
-                "HexDecodeError display must not contain '{word}' for {err:?}: {display:?}"
-            );
-        }
+        assert_display_is_non_secret("HexDecodeError", &display);
     }
 }
 
@@ -55,14 +73,7 @@ fn base64_decode_error_display_is_non_empty_and_non_secret() {
 
     for err in &cases {
         let display = format!("{}", err);
-        assert!(!display.is_empty(), "Base64DecodeError display must be non-empty for {err:?}");
-        const FORBIDDEN: &[&str] = &["0xaa", "0xbb", "plaintext", "private_key", "wrapped_key"];
-        for word in FORBIDDEN {
-            assert!(
-                !display.to_lowercase().contains(word),
-                "Base64DecodeError display must not contain '{word}' for {err:?}: {display:?}"
-            );
-        }
+        assert_display_is_non_secret("Base64DecodeError", &display);
     }
 }
 
@@ -75,16 +86,24 @@ fn base64_decode_error_display_is_non_empty_and_non_secret() {
 fn json_parse_error_display_is_non_empty_and_non_secret() {
     let cases = vec![
         JsonParseError::UnexpectedToken { expected: "object" },
-        JsonParseError::UnexpectedEndOfInput { expected: "closing quote" },
+        JsonParseError::UnexpectedEndOfInput {
+            expected: "closing quote",
+        },
         JsonParseError::TrailingContent,
         JsonParseError::UnsupportedStringEscape,
         JsonParseError::InvalidUnsignedNumber { field: "chain_id" },
-        JsonParseError::DuplicateField { field: "<duplicate>" },
+        JsonParseError::DuplicateField {
+            field: "<duplicate>",
+        },
         JsonParseError::MissingField { field: "suite" },
         JsonParseError::UnexpectedField,
         JsonParseError::FieldShape {
             field: "chain_id",
             expected: "unsigned integer",
+        },
+        JsonParseError::InvalidHex {
+            field: "domain_id",
+            error: HexDecodeError::InvalidDigit { field: "domain_id" },
         },
         JsonParseError::IntegerOverflow {
             field: "log_index",
@@ -92,23 +111,21 @@ fn json_parse_error_display_is_non_empty_and_non_secret() {
         },
     ];
 
-    const FORBIDDEN_BYTES: &[&str] = &["0xaa", "0xbb", "0xcc"];
-    const FORBIDDEN_WORDS: &[&str] = &["plaintext", "private_key", "wrapped_key"];
+    for err in &cases {
+        let display = format!("{}", err);
+        assert_display_is_non_secret("JsonParseError", &display);
+    }
+}
+
+#[test]
+fn ciphertext_json_error_display_is_non_empty_and_non_secret() {
+    let cases = vec![
+        CiphertextJsonError::Json(JsonParseError::TrailingContent),
+        CiphertextJsonError::Base64(Base64DecodeError::InvalidCharacter),
+    ];
 
     for err in &cases {
         let display = format!("{}", err);
-        assert!(!display.is_empty(), "JsonParseError display must be non-empty for {err:?}");
-        for word in FORBIDDEN_BYTES {
-            assert!(
-                !display.to_lowercase().contains(word),
-                "JsonParseError display must not contain '{word}' for {err:?}: {display:?}"
-            );
-        }
-        for word in FORBIDDEN_WORDS {
-            assert!(
-                !display.to_lowercase().contains(word),
-                "JsonParseError display must not contain secret word '{word}' for {err:?}: {display:?}"
-            );
-        }
+        assert_display_is_non_secret("CiphertextJsonError", &display);
     }
 }

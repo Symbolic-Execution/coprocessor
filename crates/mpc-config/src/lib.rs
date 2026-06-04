@@ -146,10 +146,7 @@ pub struct MpcConfigExpectations {
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum MpcConfigIncompatibility {
     #[error("chain_id mismatch: expected {expected:?}, actual {actual:?}")]
-    ChainIdMismatch {
-        expected: ChainId,
-        actual: ChainId,
-    },
+    ChainIdMismatch { expected: ChainId, actual: ChainId },
     /// DomainId carries [u8; 32] — display only a category label, no bytes.
     #[error("domain_id mismatch")]
     DomainIdMismatch {

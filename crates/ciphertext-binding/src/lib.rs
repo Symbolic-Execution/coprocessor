@@ -138,10 +138,7 @@ pub enum AadDecodeError {
     #[error("unknown AAD kind")]
     UnknownKind(u64),
     #[error("wrong AAD kind: expected {expected:?}, actual {actual:?}")]
-    WrongKind {
-        expected: AadKind,
-        actual: AadKind,
-    },
+    WrongKind { expected: AadKind, actual: AadKind },
     #[error("wrong AAD length for {kind:?}: expected {expected}, actual {actual}")]
     WrongLength {
         kind: AadKind,
@@ -162,10 +159,7 @@ pub enum AadDecodeError {
         actual: usize,
     },
     #[error("invalid UTF-8 in {kind:?}.{field}")]
-    InvalidUtf8 {
-        kind: AadKind,
-        field: &'static str,
-    },
+    InvalidUtf8 { kind: AadKind, field: &'static str },
     #[error("version overflow in AAD")]
     VersionOverflow(u64),
 }
@@ -204,17 +198,11 @@ const ENVELOPE_ARRAY_LENGTH: usize = 4;
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum EnvelopeDecodeError {
     #[error("malformed {envelope:?} envelope")]
-    Malformed {
-        envelope: EnvelopeKind,
-    },
+    Malformed { envelope: EnvelopeKind },
     #[error("non-canonical {envelope:?} envelope encoding")]
-    NonCanonicalEncoding {
-        envelope: EnvelopeKind,
-    },
+    NonCanonicalEncoding { envelope: EnvelopeKind },
     #[error("trailing bytes in {envelope:?} envelope")]
-    TrailingBytes {
-        envelope: EnvelopeKind,
-    },
+    TrailingBytes { envelope: EnvelopeKind },
     #[error("wrong {envelope:?} envelope length: expected {expected}, actual {actual}")]
     WrongLength {
         envelope: EnvelopeKind,
@@ -228,10 +216,7 @@ pub enum EnvelopeDecodeError {
         expected: &'static str,
     },
     #[error("version overflow in {envelope:?} envelope")]
-    VersionOverflow {
-        envelope: EnvelopeKind,
-        value: u64,
-    },
+    VersionOverflow { envelope: EnvelopeKind, value: u64 },
     #[error("AAD binding mismatch in {envelope:?} envelope: unexpected {actual:?} AAD")]
     AadBindingMismatch {
         envelope: EnvelopeKind,
