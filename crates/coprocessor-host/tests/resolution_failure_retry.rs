@@ -29,8 +29,7 @@ use coprocessor_enclave_runtime::{
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
     FailureReason, HandleGraphCore, HandleId, HandleKey, HandleState, HandleType, ImportedHandle,
-    InMemoryHandlePersistence, IngestionOutcome, MaterializationReceipt, OperationCode,
-    SystemCiphertextV1,
+    InMemoryHandlePersistence, IngestionOutcome, OperationCode, SystemCiphertextV1,
 };
 use coprocessor_host::{
     CoprocessorHost, HandleStateFailureCategory, HandleStateView, HostConfig, RetryPolicy,
@@ -581,7 +580,8 @@ fn fail_derived_handle_rejects_non_derived_source_handle() {
         domain_id: DomainId([DEFAULT_DOMAIN; 32]),
         handle_key: key,
         handle_type: HandleType::Suint256,
-        system_ciphertext: SystemCiphertextV1(vec![1]),        event_ref: event_ref(1, 1),
+        system_ciphertext: SystemCiphertextV1(vec![1]),
+        event_ref: event_ref(1, 1),
     }));
 
     let err = core.fail_derived_handle(
@@ -725,7 +725,8 @@ fn ingest_imported_into_host(
             domain_id: DomainId([DEFAULT_DOMAIN; 32]),
             handle_key,
             handle_type: HandleType::Suint256,
-            system_ciphertext: well_formed_system_ciphertext(handle_key, "suint256"),            event_ref: event_ref(block_number, log_index),
+            system_ciphertext: well_formed_system_ciphertext(handle_key, "suint256"),
+            event_ref: event_ref(block_number, log_index),
         }));
     assert!(matches!(outcome, IngestionOutcome::Recorded(_)));
 }
@@ -761,13 +762,15 @@ fn ingest_pair_and_derived_into_core(
         domain_id: DomainId([DEFAULT_DOMAIN; 32]),
         handle_key: a,
         handle_type: HandleType::Suint256,
-        system_ciphertext: well_formed_system_ciphertext(a, "suint256"),        event_ref: event_ref(1, 1),
+        system_ciphertext: well_formed_system_ciphertext(a, "suint256"),
+        event_ref: event_ref(1, 1),
     });
     let import_b = ChainEvent::ImportedHandle(ImportedHandle {
         domain_id: DomainId([DEFAULT_DOMAIN; 32]),
         handle_key: b,
         handle_type: HandleType::Suint256,
-        system_ciphertext: well_formed_system_ciphertext(b, "suint256"),        event_ref: event_ref(1, 2),
+        system_ciphertext: well_formed_system_ciphertext(b, "suint256"),
+        event_ref: event_ref(1, 2),
     });
     let derive = ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
         domain_id: DomainId([DEFAULT_DOMAIN; 32]),
@@ -802,13 +805,15 @@ fn ingest_pair_and_derived_into_core_with_persistence(
         domain_id: DomainId([DEFAULT_DOMAIN; 32]),
         handle_key: a,
         handle_type: HandleType::Suint256,
-        system_ciphertext: well_formed_system_ciphertext(a, "suint256"),        event_ref: event_ref(1, 1),
+        system_ciphertext: well_formed_system_ciphertext(a, "suint256"),
+        event_ref: event_ref(1, 1),
     });
     let import_b = ChainEvent::ImportedHandle(ImportedHandle {
         domain_id: DomainId([DEFAULT_DOMAIN; 32]),
         handle_key: b,
         handle_type: HandleType::Suint256,
-        system_ciphertext: well_formed_system_ciphertext(b, "suint256"),        event_ref: event_ref(1, 2),
+        system_ciphertext: well_formed_system_ciphertext(b, "suint256"),
+        event_ref: event_ref(1, 2),
     });
     let derive = ChainEvent::DerivedHandleOperation(DerivedHandleOperation {
         domain_id: DomainId([DEFAULT_DOMAIN; 32]),

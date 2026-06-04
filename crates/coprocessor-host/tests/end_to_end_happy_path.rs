@@ -29,8 +29,7 @@ use coprocessor_ciphertext_binding::{
 use coprocessor_enclave_runtime::{AttestationDigest, FakeEnclaveRuntime};
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
-    HandleId, HandleKey, HandleType, ImportedHandle, MaterializationReceipt, OperationCode,
-    SystemCiphertextV1,
+    HandleId, HandleKey, HandleType, ImportedHandle, OperationCode, SystemCiphertextV1,
 };
 use coprocessor_host::{
     ChainEventSource, ChainView, ChainViewPoll, CoprocessorHost, HandleStateView, HostConfig,
@@ -320,7 +319,8 @@ fn imported_event(
         domain_id: DomainId([DEFAULT_DOMAIN; 32]),
         handle_key,
         handle_type,
-        system_ciphertext,        event_ref: event_ref(block_number, log_index),
+        system_ciphertext,
+        event_ref: event_ref(block_number, log_index),
     })
 }
 

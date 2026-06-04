@@ -539,7 +539,12 @@ fn record_imported_suint(
     system_ciphertext: SystemCiphertextV1,
 ) {
     let _ = expect_recorded(core.apply_chain_event_with_persistence(
-        imported_event(handle_key, HandleType::Suint256, event_ref, system_ciphertext),
+        imported_event(
+            handle_key,
+            HandleType::Suint256,
+            event_ref,
+            system_ciphertext,
+        ),
         store,
     ));
 }

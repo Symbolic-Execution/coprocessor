@@ -267,7 +267,8 @@ fn seed_imported(
             domain_id: DomainId([DEFAULT_DOMAIN; 32]),
             handle_key,
             handle_type,
-            system_ciphertext: SystemCiphertextV1(vec![0x01]),            event_ref,
+            system_ciphertext: SystemCiphertextV1(vec![0x01]),
+            event_ref,
         }),
     );
 }

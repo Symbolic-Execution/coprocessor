@@ -251,7 +251,12 @@ fn seed_imported(
 ) {
     ingest(
         host,
-        imported_event(handle_key, handle_type, SystemCiphertextV1(vec![0x01]), event_ref),
+        imported_event(
+            handle_key,
+            handle_type,
+            SystemCiphertextV1(vec![0x01]),
+            event_ref,
+        ),
     );
 }
 

@@ -14,7 +14,7 @@ fn handle_imported_v1_log_decodes_into_imported_handle_chain_event() {
     let contract_addr = [7u8; 20];
     let log = ChainLog {
         chain_id: ChainId(1),
-        contract_address: ContractAddress([0xFF; 20]), // emitter — irrelevant, topic2 wins
+        contract_address: ContractAddress([0xFF; 20]), // emitter; topic2 wins
         block_number: 100,
         block_hash: bytes32(0xB1),
         tx_hash: bytes32(0xC1),
@@ -246,9 +246,8 @@ fn operation_requested_v1_decodes_every_operation_code_discriminant() {
             ],
             data: encode_operation_data(*output_type, *operation_code, &inputs),
         };
-        let event = decode_chain_log(&log).unwrap_or_else(|err| {
-            panic!("opcode {:?} must decode, got {:?}", operation_code, err)
-        });
+        let event = decode_chain_log(&log)
+            .unwrap_or_else(|err| panic!("opcode {:?} must decode, got {:?}", operation_code, err));
         let ChainEvent::DerivedHandleOperation(op) = event else {
             panic!(
                 "expected DerivedHandleOperation for opcode {:?}",
@@ -284,9 +283,8 @@ fn handle_type_discriminants_are_1_based_both_values_roundtrip() {
             ],
             data,
         };
-        let event = decode_chain_log(&log).unwrap_or_else(|err| {
-            panic!("HandleType disc {} should decode, got {:?}", disc, err)
-        });
+        let event = decode_chain_log(&log)
+            .unwrap_or_else(|err| panic!("HandleType disc {} should decode, got {:?}", disc, err));
         let ChainEvent::ImportedHandle(imported) = event else {
             panic!("expected ImportedHandle");
         };
@@ -344,7 +342,7 @@ fn unexpected_topic_count_for_imported_v1_is_rejected() {
         block_hash: bytes32(1),
         tx_hash: bytes32(1),
         log_index: 0,
-        // Only 3 topics — missing the handleId topic.
+        // Only 3 topics, missing the handleId topic.
         topics: vec![
             HANDLE_IMPORTED_V1_SIGNATURE,
             bytes32(0xD0),
@@ -431,10 +429,13 @@ fn oversized_operation_v1_input_count_is_rejected() {
     // Construct ABI head for (uint8 outputType, uint8 operation, bytes32[])
     // but claim u32::MAX elements with no element data.
     let mut data = Vec::new();
-    data.extend_from_slice(&abi_u8(1)); // outputType = Suint256
-    data.extend_from_slice(&abi_u8(1)); // operation = Add
-    data.extend_from_slice(&abi_u256(96)); // offset to array
-    // Array length = u32::MAX — no elements follow
+    // outputType = Suint256
+    data.extend_from_slice(&abi_u8(1));
+    // operation = Add
+    data.extend_from_slice(&abi_u8(1));
+    // Offset to array.
+    data.extend_from_slice(&abi_u256(96));
+    // Array length = u32::MAX; no elements follow.
     let mut huge_len = [0u8; 32];
     huge_len[28..32].copy_from_slice(&u32::MAX.to_be_bytes());
     data.extend_from_slice(&huge_len);
@@ -539,6 +540,56 @@ fn zero_handle_type_discriminant_is_rejected() {
         decode_chain_log(&log),
         Err(ChainLogDecodeError::UnknownHandleType(0))
     );
+}
+
+#[test]
+fn trailing_data_after_imported_v1_is_rejected() {
+    let mut data = encode_imported_data(HandleType::Suint256, &[1, 2, 3]);
+    data.extend_from_slice(&[0u8; 32]);
+    let log = ChainLog {
+        chain_id: ChainId(1),
+        contract_address: ContractAddress([7; 20]),
+        block_number: 1,
+        block_hash: bytes32(1),
+        tx_hash: bytes32(1),
+        log_index: 0,
+        topics: vec![
+            HANDLE_IMPORTED_V1_SIGNATURE,
+            bytes32(0xD0),
+            address_topic([7; 20]),
+            bytes32(0x42),
+        ],
+        data,
+    };
+    assert!(matches!(
+        decode_chain_log(&log),
+        Err(ChainLogDecodeError::MalformedAbiData)
+    ));
+}
+
+#[test]
+fn noncanonical_uint8_padding_is_rejected_as_malformed_abi() {
+    let mut data = encode_imported_data(HandleType::Suint256, &[1]);
+    data[0] = 1;
+    let log = ChainLog {
+        chain_id: ChainId(1),
+        contract_address: ContractAddress([7; 20]),
+        block_number: 1,
+        block_hash: bytes32(1),
+        tx_hash: bytes32(1),
+        log_index: 0,
+        topics: vec![
+            HANDLE_IMPORTED_V1_SIGNATURE,
+            bytes32(0xD0),
+            address_topic([7; 20]),
+            bytes32(0x42),
+        ],
+        data,
+    };
+    assert!(matches!(
+        decode_chain_log(&log),
+        Err(ChainLogDecodeError::MalformedAbiData)
+    ));
 }
 
 #[test]

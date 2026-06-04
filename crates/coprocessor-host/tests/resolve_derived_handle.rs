@@ -29,8 +29,8 @@ use coprocessor_enclave_runtime::{
 };
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
-    HandleId, HandleKey, HandleType, ImportedHandle, IngestionOutcome, MaterializationReceipt,
-    OperationCode, SystemCiphertextV1,
+    HandleId, HandleKey, HandleType, ImportedHandle, IngestionOutcome, OperationCode,
+    SystemCiphertextV1,
 };
 use coprocessor_host::{CoprocessorHost, HandleStateFailureCategory, HandleStateView, HostConfig};
 use coprocessor_mpc_client::{
@@ -882,7 +882,8 @@ fn ingest_imported(
             domain_id: DomainId([DEFAULT_DOMAIN; 32]),
             handle_key,
             handle_type,
-            system_ciphertext,            event_ref: event_ref(block_number, log_index),
+            system_ciphertext,
+            event_ref: event_ref(block_number, log_index),
         }));
     assert!(matches!(outcome, IngestionOutcome::Recorded(_)));
 }

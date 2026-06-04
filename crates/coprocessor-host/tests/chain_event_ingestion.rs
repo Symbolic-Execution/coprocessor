@@ -6,8 +6,8 @@
 
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
-    HandleId, HandleKey, HandleState, HandleType, ImportedHandle, MaterializationReceipt,
-    OperationCode, SystemCiphertextV1,
+    HandleId, HandleKey, HandleState, HandleType, ImportedHandle, OperationCode,
+    SystemCiphertextV1,
 };
 use coprocessor_host::{
     ChainEventSource, ChainView, ChainViewPoll, CoprocessorHost, HostConfig, IngestionReport,
@@ -424,7 +424,8 @@ fn imported_event(key: HandleKey, block_number: u64, log_index: u32) -> ChainEve
         domain_id: TEST_DOMAIN,
         handle_key: key,
         handle_type: HandleType::Sbool,
-        system_ciphertext: SystemCiphertextV1(vec![0x01]),        event_ref: event_ref(block_number, log_index),
+        system_ciphertext: SystemCiphertextV1(vec![0x01]),
+        event_ref: event_ref(block_number, log_index),
     })
 }
 

@@ -52,7 +52,12 @@ fn resolve_handle_returns_ready_with_ciphertext_and_receipt_for_imported_handle(
     };
     ingest(
         &mut host,
-        imported_event(key, HandleType::Suint256, ciphertext, default_event_ref(1, 1)),
+        imported_event(
+            key,
+            HandleType::Suint256,
+            ciphertext,
+            default_event_ref(1, 1),
+        ),
     );
 
     assert_eq!(host.resolve_handle(default_request_id(), &key), expected);
@@ -288,7 +293,12 @@ fn seed_imported(
 ) {
     ingest(
         host,
-        imported_event(handle_key, handle_type, SystemCiphertextV1(vec![0x01]), event_ref),
+        imported_event(
+            handle_key,
+            handle_type,
+            SystemCiphertextV1(vec![0x01]),
+            event_ref,
+        ),
     );
 }
 

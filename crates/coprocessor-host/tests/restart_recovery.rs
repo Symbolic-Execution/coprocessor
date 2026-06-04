@@ -251,12 +251,7 @@ fn restored_host_audit_view_exposes_tombstoned_record_with_original_state() {
     record_event(
         &mut before_restart,
         &mut store,
-        imported_event(
-            key,
-            HandleType::Suint256,
-            event_ref,
-            ciphertext.clone(),
-        ),
+        imported_event(key, HandleType::Suint256, event_ref, ciphertext.clone()),
     );
     before_restart.apply_orphan_discard_with_persistence(&[event_ref], &mut store);
 

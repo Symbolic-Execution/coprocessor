@@ -23,7 +23,7 @@
 //!
 //! Input handle ids in `OperationRequestedV1` are decoded into `HandleKey`s
 //! using the chain id from the monitored log and the contract address from
-//! topic2 — not the log emitter address.
+//! topic2, not the log emitter address.
 
 use alloy_primitives::B256;
 use alloy_sol_types::{sol, SolEvent};
@@ -137,14 +137,22 @@ fn topics_as_b256(log: &ChainLog) -> Vec<B256> {
     log.topics.iter().map(|t| B256::from(*t)).collect()
 }
 
+fn decode_exact_event<E: SolEvent>(log: &ChainLog) -> Result<E, ChainLogDecodeError> {
+    let topics = topics_as_b256(log);
+    let decoded = E::decode_raw_log_validate(&topics, &log.data)
+        .map_err(|_| ChainLogDecodeError::MalformedAbiData)?;
+    if decoded.encode_data() != log.data {
+        return Err(ChainLogDecodeError::MalformedAbiData);
+    }
+    Ok(decoded)
+}
+
 fn decode_imported(
     log: &ChainLog,
     event_ref: ChainEventRef,
 ) -> Result<ChainEvent, ChainLogDecodeError> {
     expect_four_topics(log, HANDLE_IMPORTED_V1_SIGNATURE)?;
-    let topics = topics_as_b256(log);
-    let decoded = HandleImportedV1::decode_raw_log(&topics, &log.data)
-        .map_err(|_| ChainLogDecodeError::MalformedAbiData)?;
+    let decoded = decode_exact_event::<HandleImportedV1>(log)?;
     let handle_type = handle_type_from_byte(decoded.handleType)?;
     let contract_address = ContractAddress(decoded.contractAddress.0 .0);
     Ok(ChainEvent::ImportedHandle(ImportedHandle {
@@ -165,9 +173,7 @@ fn decode_plaintext(
     event_ref: ChainEventRef,
 ) -> Result<ChainEvent, ChainLogDecodeError> {
     expect_four_topics(log, HANDLE_FROM_PLAINTEXT_V1_SIGNATURE)?;
-    let topics = topics_as_b256(log);
-    let decoded = HandleFromPlaintextV1::decode_raw_log(&topics, &log.data)
-        .map_err(|_| ChainLogDecodeError::MalformedAbiData)?;
+    let decoded = decode_exact_event::<HandleFromPlaintextV1>(log)?;
     let handle_type = handle_type_from_byte(decoded.handleType)?;
     let contract_address = ContractAddress(decoded.contractAddress.0 .0);
     Ok(ChainEvent::PlaintextHandle(PlaintextHandle {
@@ -188,9 +194,7 @@ fn decode_operation(
     event_ref: ChainEventRef,
 ) -> Result<ChainEvent, ChainLogDecodeError> {
     expect_four_topics(log, OPERATION_REQUESTED_V1_SIGNATURE)?;
-    let topics = topics_as_b256(log);
-    let decoded = OperationRequestedV1::decode_raw_log(&topics, &log.data)
-        .map_err(|_| ChainLogDecodeError::MalformedAbiData)?;
+    let decoded = decode_exact_event::<OperationRequestedV1>(log)?;
     let output_handle_type = handle_type_from_byte(decoded.outputType)?;
     let operation_code = operation_code_from_byte(decoded.operation)?;
     let contract_address = ContractAddress(decoded.contractAddress.0 .0);
@@ -227,7 +231,7 @@ fn chain_event_ref(log: &ChainLog) -> ChainEventRef {
     }
 }
 
-/// 1-based per spec: Suint256=1, Sbool=2. Rejects 0 and values ≥ 3.
+/// 1-based per spec: Suint256=1, Sbool=2. Rejects 0 and values >= 3.
 fn handle_type_from_byte(byte: u8) -> Result<HandleType, ChainLogDecodeError> {
     match byte {
         1 => Ok(HandleType::Suint256),
@@ -236,7 +240,7 @@ fn handle_type_from_byte(byte: u8) -> Result<HandleType, ChainLogDecodeError> {
     }
 }
 
-/// 1-based per spec: Add=1 .. Select=11. Rejects 0 and values ≥ 12.
+/// 1-based per spec: Add=1 .. Select=11. Rejects 0 and values >= 12.
 fn operation_code_from_byte(byte: u8) -> Result<OperationCode, ChainLogDecodeError> {
     match byte {
         1 => Ok(OperationCode::Add),

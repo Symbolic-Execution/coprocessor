@@ -18,8 +18,8 @@
 
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
-    HandleId, HandleKey, HandleRecord, HandleType, ImportedHandle, IngestionOutcome,
-    MaterializationReceipt, OperationCode, SystemCiphertextV1,
+    HandleId, HandleKey, HandleRecord, HandleType, ImportedHandle, IngestionOutcome, OperationCode,
+    SystemCiphertextV1,
 };
 use coprocessor_host::{
     CoprocessorHost, HandleStateView, HostConfig, RequestId, ResolutionIntent, ResolutionTask,
@@ -409,7 +409,8 @@ fn ingest_imported(
             domain_id: DomainId([DEFAULT_DOMAIN; 32]),
             handle_key,
             handle_type,
-            system_ciphertext,            event_ref: default_event_ref(block_number, log_index),
+            system_ciphertext,
+            event_ref: default_event_ref(block_number, log_index),
         }),
     );
 }
