@@ -424,9 +424,7 @@ fn imported_event(key: HandleKey, block_number: u64, log_index: u32) -> ChainEve
         domain_id: TEST_DOMAIN,
         handle_key: key,
         handle_type: HandleType::Sbool,
-        system_ciphertext: SystemCiphertextV1(vec![0x01]),
-        materialization_receipt: MaterializationReceipt(vec![0x02]),
-        event_ref: event_ref(block_number, log_index),
+        system_ciphertext: SystemCiphertextV1(vec![0x01]),        event_ref: event_ref(block_number, log_index),
     })
 }
 

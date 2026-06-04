@@ -365,7 +365,6 @@ fn imported_event(
         handle_key,
         handle_type,
         system_ciphertext,
-        materialization_receipt: MaterializationReceipt(vec![0x02]),
         event_ref,
     })
 }

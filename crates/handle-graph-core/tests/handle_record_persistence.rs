@@ -20,22 +20,15 @@ use coprocessor_handle_graph_core::{
 const DEFAULT_DOMAIN: u8 = 9;
 
 #[test]
-fn imported_ready_handle_persists_with_system_ciphertext_and_materialization_receipt() {
+fn imported_ready_handle_persists_with_system_ciphertext_and_empty_receipt() {
     let mut core = HandleGraphCore::new();
     let mut store = InMemoryHandlePersistence::new();
     let key = handle_key(1, 7, 1);
     let event_ref = chain_event_ref(1, 1, 1);
     let ciphertext = SystemCiphertextV1(vec![0xAA, 0xBB, 0xCC]);
-    let receipt = MaterializationReceipt(vec![0xDD, 0xEE]);
 
     let _ = expect_recorded(core.apply_chain_event_with_persistence(
-        imported_event(
-            key,
-            HandleType::Suint256,
-            event_ref,
-            ciphertext.clone(),
-            receipt.clone(),
-        ),
+        imported_event(key, HandleType::Suint256, event_ref, ciphertext.clone()),
         &mut store,
     ));
 
@@ -48,11 +41,12 @@ fn imported_ready_handle_persists_with_system_ciphertext_and_materialization_rec
     assert!(stored.is_canonical);
     assert!(!stored.is_tombstoned);
     assert_eq!(stored.lineage, HandleLineage::Source);
+    // Per spec, imported handles carry an empty materialization receipt.
     assert_eq!(
         stored.state,
         HandleState::Ready {
             system_ciphertext: ciphertext,
-            materialization_receipt: receipt,
+            materialization_receipt: MaterializationReceipt(Vec::new()),
         }
     );
 }
@@ -173,7 +167,6 @@ fn consumed_chain_event_ref_persists_so_replay_is_idempotent_after_restart() {
         HandleType::Suint256,
         event_ref,
         SystemCiphertextV1(vec![1, 2, 3]),
-        MaterializationReceipt(vec![4, 5, 6]),
     );
 
     let _ = expect_recorded(original.apply_chain_event_with_persistence(event.clone(), &mut store));
@@ -203,7 +196,6 @@ fn restored_core_serves_canonical_records_for_pending_ready_and_failed_states() 
             HandleType::Suint256,
             chain_event_ref(1, 1, 1),
             SystemCiphertextV1(vec![0xAA]),
-            MaterializationReceipt(vec![0xBB]),
         ),
         &mut store,
     ));
@@ -213,7 +205,6 @@ fn restored_core_serves_canonical_records_for_pending_ready_and_failed_states() 
             HandleType::Suint256,
             chain_event_ref(1, 1, 2),
             SystemCiphertextV1(vec![0xCC]),
-            MaterializationReceipt(vec![0xDD]),
         ),
         &mut store,
     ));
@@ -274,7 +265,6 @@ fn tombstone_persists_and_canonical_reads_remain_hidden_after_restart() {
             HandleType::Suint256,
             imported_event_ref,
             SystemCiphertextV1(vec![1]),
-            MaterializationReceipt(vec![2]),
         ),
         &mut store,
     ));
@@ -310,7 +300,6 @@ fn cascade_tombstone_persists_and_remains_hidden_from_canonical_reads_after_rest
         a,
         a_event_ref,
         SystemCiphertextV1(vec![1]),
-        MaterializationReceipt(vec![2]),
     );
     record_imported_suint(
         &mut core,
@@ -318,7 +307,6 @@ fn cascade_tombstone_persists_and_remains_hidden_from_canonical_reads_after_rest
         b,
         chain_event_ref(1, 1, 2),
         SystemCiphertextV1(vec![3]),
-        MaterializationReceipt(vec![4]),
     );
     record_pending_add(
         &mut core,
@@ -368,7 +356,6 @@ fn tombstoned_record_audit_preserves_chain_event_ref_lineage_and_state_after_res
     let b = handle_key(1, 7, 111);
     let a_event_ref = chain_event_ref(1, 1, 1);
     let imported_ciphertext = SystemCiphertextV1(vec![0xAA, 0xBB]);
-    let imported_receipt = MaterializationReceipt(vec![0xCC, 0xDD]);
     let derived = handle_key(1, 7, 112);
     let derived_event_ref = chain_event_ref(1, 2, 1);
 
@@ -378,7 +365,6 @@ fn tombstoned_record_audit_preserves_chain_event_ref_lineage_and_state_after_res
         a,
         a_event_ref,
         imported_ciphertext.clone(),
-        imported_receipt.clone(),
     );
     record_imported_suint(
         &mut core,
@@ -386,7 +372,6 @@ fn tombstoned_record_audit_preserves_chain_event_ref_lineage_and_state_after_res
         b,
         chain_event_ref(1, 1, 2),
         SystemCiphertextV1(vec![3]),
-        MaterializationReceipt(vec![4]),
     );
     record_pending_add(
         &mut core,
@@ -417,7 +402,7 @@ fn tombstoned_record_audit_preserves_chain_event_ref_lineage_and_state_after_res
         audit_a.state,
         HandleState::Ready {
             system_ciphertext: imported_ciphertext,
-            materialization_receipt: imported_receipt,
+            materialization_receipt: MaterializationReceipt(Vec::new()),
         },
         "audit must preserve original Handle State after restart"
     );
@@ -460,7 +445,6 @@ fn duplicate_rejected_record_is_not_persisted_but_event_is_marked_consumed() {
             HandleType::Suint256,
             first_event,
             SystemCiphertextV1(vec![1]),
-            MaterializationReceipt(vec![2]),
         ),
         &mut store,
     ));
@@ -471,7 +455,6 @@ fn duplicate_rejected_record_is_not_persisted_but_event_is_marked_consumed() {
             HandleType::Suint256,
             second_event,
             SystemCiphertextV1(vec![9]),
-            MaterializationReceipt(vec![8]),
         ),
         &mut store,
     );
@@ -502,7 +485,6 @@ fn handle_records_listing_returns_all_persisted_records() {
             HandleType::Suint256,
             chain_event_ref(1, 1, 1),
             SystemCiphertextV1(vec![1]),
-            MaterializationReceipt(vec![2]),
         ),
         &mut store,
     ));
@@ -512,7 +494,6 @@ fn handle_records_listing_returns_all_persisted_records() {
             HandleType::Suint256,
             chain_event_ref(1, 1, 2),
             SystemCiphertextV1(vec![3]),
-            MaterializationReceipt(vec![4]),
         ),
         &mut store,
     ));
@@ -539,7 +520,6 @@ fn seed_imported_suint_pair(
         a,
         chain_event_ref(1, 1, a_seed as u32),
         SystemCiphertextV1(vec![1]),
-        MaterializationReceipt(vec![2]),
     );
     record_imported_suint(
         core,
@@ -547,7 +527,6 @@ fn seed_imported_suint_pair(
         b,
         chain_event_ref(1, 1, b_seed as u32),
         SystemCiphertextV1(vec![3]),
-        MaterializationReceipt(vec![4]),
     );
     (a, b)
 }
@@ -558,16 +537,9 @@ fn record_imported_suint(
     handle_key: HandleKey,
     event_ref: ChainEventRef,
     system_ciphertext: SystemCiphertextV1,
-    materialization_receipt: MaterializationReceipt,
 ) {
     let _ = expect_recorded(core.apply_chain_event_with_persistence(
-        imported_event(
-            handle_key,
-            HandleType::Suint256,
-            event_ref,
-            system_ciphertext,
-            materialization_receipt,
-        ),
+        imported_event(handle_key, HandleType::Suint256, event_ref, system_ciphertext),
         store,
     ));
 }
@@ -603,14 +575,12 @@ fn imported_event(
     handle_type: HandleType,
     event_ref: ChainEventRef,
     system_ciphertext: SystemCiphertextV1,
-    materialization_receipt: MaterializationReceipt,
 ) -> ChainEvent {
     ChainEvent::ImportedHandle(ImportedHandle {
         domain_id: DomainId(bytes32(DEFAULT_DOMAIN)),
         handle_key,
         handle_type,
         system_ciphertext,
-        materialization_receipt,
         event_ref,
     })
 }

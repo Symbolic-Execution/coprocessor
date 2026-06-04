@@ -789,9 +789,7 @@ fn imported_event(
         domain_id: DomainId([DEFAULT_DOMAIN; 32]),
         handle_key,
         handle_type,
-        system_ciphertext,
-        materialization_receipt: MaterializationReceipt(vec![0x01]),
-        event_ref,
+        system_ciphertext,        event_ref,
     })
 }
 

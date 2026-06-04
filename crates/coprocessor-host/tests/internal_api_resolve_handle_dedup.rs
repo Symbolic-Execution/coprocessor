@@ -90,20 +90,18 @@ fn repeated_resolve_for_ready_handle_returns_stable_state_without_registering_in
     let mut host = running_host();
     let key = default_handle_key(1);
     let ciphertext = SystemCiphertextV1(vec![0xAA, 0xBB]);
-    let receipt = MaterializationReceipt(vec![0xCC]);
     ingest(
         &mut host,
         imported_event(
             key,
             HandleType::Suint256,
             ciphertext.clone(),
-            receipt.clone(),
             default_event_ref(1, 1),
         ),
     );
     let expected = HandleStateView::Ready {
         system_ciphertext: ciphertext,
-        materialization_receipt: receipt,
+        materialization_receipt: MaterializationReceipt(Vec::new()),
         derived_receipt: None,
     };
 
@@ -253,13 +251,7 @@ fn seed_imported(
 ) {
     ingest(
         host,
-        imported_event(
-            handle_key,
-            handle_type,
-            SystemCiphertextV1(vec![0x01]),
-            MaterializationReceipt(vec![0x02]),
-            event_ref,
-        ),
+        imported_event(handle_key, handle_type, SystemCiphertextV1(vec![0x01]), event_ref),
     );
 }
 
@@ -274,7 +266,6 @@ fn imported_event(
     handle_key: HandleKey,
     handle_type: HandleType,
     system_ciphertext: SystemCiphertextV1,
-    materialization_receipt: MaterializationReceipt,
     event_ref: ChainEventRef,
 ) -> ChainEvent {
     ChainEvent::ImportedHandle(ImportedHandle {
@@ -282,7 +273,6 @@ fn imported_event(
         handle_key,
         handle_type,
         system_ciphertext,
-        materialization_receipt,
         event_ref,
     })
 }

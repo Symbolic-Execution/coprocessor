@@ -39,7 +39,6 @@ fn get_handle_state_returns_ready_with_ciphertext_and_receipt_for_imported_handl
     let mut host = running_host();
     let key = handle_key(1, 7, 1);
     let ciphertext = SystemCiphertextV1(vec![0xAA, 0xBB, 0xCC]);
-    let receipt = MaterializationReceipt(vec![0xDD, 0xEE]);
     ingest(
         &mut host,
         ChainEvent::ImportedHandle(ImportedHandle {
@@ -47,7 +46,6 @@ fn get_handle_state_returns_ready_with_ciphertext_and_receipt_for_imported_handl
             handle_key: key,
             handle_type: HandleType::Suint256,
             system_ciphertext: ciphertext.clone(),
-            materialization_receipt: receipt.clone(),
             event_ref: chain_event_ref(1, 1, 1),
         }),
     );
@@ -59,7 +57,8 @@ fn get_handle_state_returns_ready_with_ciphertext_and_receipt_for_imported_handl
             derived_receipt,
         } => {
             assert_eq!(system_ciphertext, ciphertext);
-            assert_eq!(materialization_receipt, receipt);
+            // Per spec, imported handles carry an empty materialization receipt.
+            assert_eq!(materialization_receipt, MaterializationReceipt(Vec::new()));
             // Source (Imported) handle: no structured derived receipt
             assert_eq!(derived_receipt, None);
         }
@@ -268,9 +267,7 @@ fn seed_imported(
             domain_id: DomainId([DEFAULT_DOMAIN; 32]),
             handle_key,
             handle_type,
-            system_ciphertext: SystemCiphertextV1(vec![0x01]),
-            materialization_receipt: MaterializationReceipt(vec![0x02]),
-            event_ref,
+            system_ciphertext: SystemCiphertextV1(vec![0x01]),            event_ref,
         }),
     );
 }

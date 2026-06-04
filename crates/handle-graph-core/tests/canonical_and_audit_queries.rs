@@ -56,13 +56,11 @@ fn canonical_query_returns_imported_ready_source_handle_with_ciphertext_and_rece
     let key = handle_key(1, 7, 1);
     let event_ref = chain_event_ref(1, 1, 1);
     let ciphertext = SystemCiphertextV1(vec![0xAA, 0xBB]);
-    let receipt = MaterializationReceipt(vec![0xCC, 0xDD]);
     let _ = expect_recorded(core.apply_chain_event(imported_event_with(
         key,
         HandleType::Suint256,
         event_ref,
         ciphertext.clone(),
-        receipt.clone(),
     )));
 
     let record = core
@@ -80,9 +78,12 @@ fn canonical_query_returns_imported_ready_source_handle_with_ciphertext_and_rece
                 system_ciphertext, &ciphertext,
                 "canonical query must surface the imported SystemCiphertextV1"
             );
+            // Per spec, imported handles carry an empty receipt;
+            // the SystemCiphertextV1 is the ready source value.
             assert_eq!(
-                materialization_receipt, &receipt,
-                "canonical query must surface the imported MaterializationReceipt"
+                materialization_receipt,
+                &MaterializationReceipt(Vec::new()),
+                "imported handle must carry empty materialization receipt per spec"
             );
         }
         other => panic!("expected Ready source handle, got {:?}", other),
@@ -502,7 +503,6 @@ fn seed_imported(
         handle_type,
         event_ref,
         SystemCiphertextV1(vec![0x01]),
-        MaterializationReceipt(vec![0x02]),
     )));
 }
 
@@ -511,14 +511,12 @@ fn imported_event_with(
     handle_type: HandleType,
     event_ref: ChainEventRef,
     system_ciphertext: SystemCiphertextV1,
-    materialization_receipt: MaterializationReceipt,
 ) -> ChainEvent {
     ChainEvent::ImportedHandle(ImportedHandle {
         domain_id: DomainId(bytes32(DEFAULT_DOMAIN)),
         handle_key,
         handle_type,
         system_ciphertext,
-        materialization_receipt,
         event_ref,
     })
 }

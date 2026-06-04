@@ -40,17 +40,10 @@ fn ready_source_handle_persists_exact_system_ciphertext_and_provenance() {
     let key = handle_key(1, 7, 1);
     let event_ref = chain_event_ref(1, 1, 1);
     let ciphertext = SystemCiphertextV1(vec![0xAA, 0xBB, 0xCC]);
-    let receipt = MaterializationReceipt(vec![0xDD, 0xEE]);
     let domain = DomainId(bytes32(DEFAULT_DOMAIN));
 
     let _ = expect_recorded(core.apply_chain_event_with_persistence(
-        imported_event(
-            key,
-            HandleType::Suint256,
-            event_ref,
-            ciphertext.clone(),
-            receipt.clone(),
-        ),
+        imported_event(key, HandleType::Suint256, event_ref, ciphertext.clone()),
         &mut store,
     ));
 
@@ -68,8 +61,9 @@ fn ready_source_handle_persists_exact_system_ciphertext_and_provenance() {
         "source handle must not be tombstoned"
     );
 
-    // The Ready state holds exactly the SystemCiphertextV1 and receipt we
-    // supplied — no plaintext Private Value.
+    // The Ready state holds the SystemCiphertextV1 and an empty receipt;
+    // per spec the submitted SystemCiphertextV1 is the ready source value
+    // and imported handles carry no materialization receipt.
     let HandleState::Ready {
         system_ciphertext,
         materialization_receipt,
@@ -82,13 +76,13 @@ fn ready_source_handle_persists_exact_system_ciphertext_and_provenance() {
         "persisted SystemCiphertextV1 must equal the bytes supplied at ingestion"
     );
     assert_eq!(
-        materialization_receipt, receipt,
-        "persisted MaterializationReceipt must equal the bytes supplied at ingestion"
+        materialization_receipt,
+        MaterializationReceipt(Vec::new()),
+        "imported handle must carry empty materialization receipt per spec"
     );
 
-    // Opaque bytes are non-empty.
+    // SystemCiphertextV1 is non-empty (the receipt is empty per spec).
     assert!(!system_ciphertext.0.is_empty());
-    assert!(!materialization_receipt.0.is_empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -110,7 +104,6 @@ fn enclave_ciphertext_v1_bytes_never_appear_in_persisted_ready_state() {
         a,
         chain_event_ref(1, 1, 1),
         SystemCiphertextV1(vec![1]),
-        MaterializationReceipt(vec![2]),
     );
     record_imported_suint(
         &mut core,
@@ -118,7 +111,6 @@ fn enclave_ciphertext_v1_bytes_never_appear_in_persisted_ready_state() {
         b,
         chain_event_ref(1, 1, 2),
         SystemCiphertextV1(vec![3]),
-        MaterializationReceipt(vec![4]),
     );
     record_pending_add(
         &mut core,
@@ -195,7 +187,6 @@ fn failure_reason_strings_in_persistence_contain_no_secret_material() {
         a,
         chain_event_ref(1, 1, 1),
         SystemCiphertextV1(vec![1]),
-        MaterializationReceipt(vec![2]),
     );
     record_imported_suint(
         &mut core,
@@ -203,7 +194,6 @@ fn failure_reason_strings_in_persistence_contain_no_secret_material() {
         b,
         chain_event_ref(1, 1, 2),
         SystemCiphertextV1(vec![3]),
-        MaterializationReceipt(vec![4]),
     );
     record_pending_add(
         &mut core,
@@ -281,7 +271,6 @@ fn provenance_fields_survive_persistence_round_trip_for_ready_derived_handle() {
         a,
         chain_event_ref(1, 1, 1),
         SystemCiphertextV1(vec![1]),
-        MaterializationReceipt(vec![2]),
     );
     record_imported_suint(
         &mut core,
@@ -289,7 +278,6 @@ fn provenance_fields_survive_persistence_round_trip_for_ready_derived_handle() {
         b,
         chain_event_ref(1, 1, 2),
         SystemCiphertextV1(vec![3]),
-        MaterializationReceipt(vec![4]),
     );
     record_pending_add(
         &mut core,
@@ -424,16 +412,9 @@ fn record_imported_suint(
     handle_key: HandleKey,
     event_ref: ChainEventRef,
     system_ciphertext: SystemCiphertextV1,
-    materialization_receipt: MaterializationReceipt,
 ) {
     let _ = expect_recorded(core.apply_chain_event_with_persistence(
-        imported_event(
-            handle_key,
-            HandleType::Suint256,
-            event_ref,
-            system_ciphertext,
-            materialization_receipt,
-        ),
+        imported_event(handle_key, HandleType::Suint256, event_ref, system_ciphertext),
         store,
     ));
 }
@@ -470,14 +451,12 @@ fn imported_event(
     handle_type: HandleType,
     event_ref: ChainEventRef,
     system_ciphertext: SystemCiphertextV1,
-    materialization_receipt: MaterializationReceipt,
 ) -> ChainEvent {
     ChainEvent::ImportedHandle(ImportedHandle {
         domain_id: DomainId(bytes32(DEFAULT_DOMAIN)),
         handle_key,
         handle_type,
         system_ciphertext,
-        materialization_receipt,
         event_ref,
     })
 }

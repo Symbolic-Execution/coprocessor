@@ -606,9 +606,7 @@ fn ingest_imported(
             domain_id: DomainId([DEFAULT_DOMAIN; 32]),
             handle_key,
             handle_type,
-            system_ciphertext: well_formed_system_ciphertext(handle_key, type_tag),
-            materialization_receipt: MaterializationReceipt(vec![0x02]),
-            event_ref: event_ref(block_number, log_index),
+            system_ciphertext: well_formed_system_ciphertext(handle_key, type_tag),            event_ref: event_ref(block_number, log_index),
         }));
     assert!(matches!(outcome, IngestionOutcome::Recorded(_)));
 }

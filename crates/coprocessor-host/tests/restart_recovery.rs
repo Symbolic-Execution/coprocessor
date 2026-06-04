@@ -45,7 +45,6 @@ fn restored_host_serves_ready_record_via_get_handle_state() {
     let mut before_restart = HandleGraphCore::new();
     let key = handle_key(1, 7, 1);
     let ciphertext = SystemCiphertextV1(vec![0xAA, 0xBB]);
-    let receipt = MaterializationReceipt(vec![0xCC, 0xDD]);
     record_event(
         &mut before_restart,
         &mut store,
@@ -54,7 +53,6 @@ fn restored_host_serves_ready_record_via_get_handle_state() {
             HandleType::Suint256,
             chain_event_ref(1, 1, 1),
             ciphertext.clone(),
-            receipt.clone(),
         ),
     );
 
@@ -64,7 +62,7 @@ fn restored_host_serves_ready_record_via_get_handle_state() {
         host.get_handle_state(&key),
         HandleStateView::Ready {
             system_ciphertext: ciphertext,
-            materialization_receipt: receipt,
+            materialization_receipt: MaterializationReceipt(Vec::new()),
             derived_receipt: None,
         }
     );
@@ -136,7 +134,6 @@ fn restored_host_hides_tombstoned_record_from_canonical_reads() {
             HandleType::Suint256,
             event_ref,
             SystemCiphertextV1(vec![1]),
-            MaterializationReceipt(vec![2]),
         ),
     );
     before_restart.apply_orphan_discard_with_persistence(&[event_ref], &mut store);
@@ -232,7 +229,6 @@ fn restored_host_replays_consumed_events_idempotently() {
         HandleType::Suint256,
         event_ref,
         SystemCiphertextV1(vec![1, 2, 3]),
-        MaterializationReceipt(vec![4, 5, 6]),
     );
     record_event(&mut before_restart, &mut store, event.clone());
 
@@ -252,7 +248,6 @@ fn restored_host_audit_view_exposes_tombstoned_record_with_original_state() {
     let key = handle_key(1, 7, 9);
     let event_ref = chain_event_ref(1, 1, 1);
     let ciphertext = SystemCiphertextV1(vec![0xAA, 0xBB]);
-    let receipt = MaterializationReceipt(vec![0xCC, 0xDD]);
     record_event(
         &mut before_restart,
         &mut store,
@@ -261,7 +256,6 @@ fn restored_host_audit_view_exposes_tombstoned_record_with_original_state() {
             HandleType::Suint256,
             event_ref,
             ciphertext.clone(),
-            receipt.clone(),
         ),
     );
     before_restart.apply_orphan_discard_with_persistence(&[event_ref], &mut store);
@@ -278,7 +272,7 @@ fn restored_host_audit_view_exposes_tombstoned_record_with_original_state() {
         audit.state,
         HandleState::Ready {
             system_ciphertext: ciphertext,
-            materialization_receipt: receipt,
+            materialization_receipt: MaterializationReceipt(Vec::new()),
         }
     );
 }
@@ -306,7 +300,6 @@ fn restored_host_ready_derived_handle_exposes_structured_receipt_after_restart()
             HandleType::Suint256,
             chain_event_ref(1, 1, 1),
             SystemCiphertextV1(vec![0xA1]),
-            MaterializationReceipt(vec![0xA2]),
         ),
     );
     record_event(
@@ -317,7 +310,6 @@ fn restored_host_ready_derived_handle_exposes_structured_receipt_after_restart()
             HandleType::Suint256,
             chain_event_ref(1, 1, 2),
             SystemCiphertextV1(vec![0xB1]),
-            MaterializationReceipt(vec![0xB2]),
         ),
     );
     record_event(
@@ -380,7 +372,6 @@ fn restored_host_ready_derived_handle_persistence_contains_no_raw_attestation_do
             HandleType::Suint256,
             chain_event_ref(1, 1, 1),
             SystemCiphertextV1(vec![0xA1]),
-            MaterializationReceipt(vec![0xA2]),
         ),
     );
     record_event(
@@ -391,7 +382,6 @@ fn restored_host_ready_derived_handle_persistence_contains_no_raw_attestation_do
             HandleType::Suint256,
             chain_event_ref(1, 1, 2),
             SystemCiphertextV1(vec![0xB1]),
-            MaterializationReceipt(vec![0xB2]),
         ),
     );
     record_event(
@@ -463,7 +453,6 @@ fn seed_imported_pair(
             HandleType::Suint256,
             chain_event_ref(1, 1, 1),
             SystemCiphertextV1(vec![0xA1]),
-            MaterializationReceipt(vec![0xA2]),
         ),
     );
     record_event(
@@ -474,7 +463,6 @@ fn seed_imported_pair(
             HandleType::Suint256,
             chain_event_ref(1, 1, 2),
             SystemCiphertextV1(vec![0xB1]),
-            MaterializationReceipt(vec![0xB2]),
         ),
     );
     (a, b)
@@ -507,14 +495,12 @@ fn imported_event(
     handle_type: HandleType,
     event_ref: ChainEventRef,
     system_ciphertext: SystemCiphertextV1,
-    materialization_receipt: MaterializationReceipt,
 ) -> ChainEvent {
     ChainEvent::ImportedHandle(ImportedHandle {
         domain_id: DomainId([DEFAULT_DOMAIN; 32]),
         handle_key,
         handle_type,
         system_ciphertext,
-        materialization_receipt,
         event_ref,
     })
 }
