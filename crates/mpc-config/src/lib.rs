@@ -30,7 +30,9 @@ pub use coprocessor_transport_json::{HexDecodeError, JsonParseError};
 
 use thiserror::Error;
 
-use coprocessor_transport_json::{decode_hex_lower, decode_hex_lower_variable, parse_object};
+use serde::{de::Error as DeError, Deserialize, Deserializer};
+
+use coprocessor_transport_json::{decode_hex_lower, decode_hex_lower_variable};
 
 const DOMAIN_ID_LEN: usize = 32;
 const KEY_ID_LEN: usize = 32;
@@ -250,33 +252,48 @@ pub fn load_mpc_public_config(
     Ok(config)
 }
 
+/// Wire-shaped serde DTO for the MPC public configuration JSON payload.
+/// All hex fields are kept as `String` so hex validation is delegated to the
+/// transport codec after parsing; this keeps the malformed-vs-incompatible
+/// split entirely in `load_mpc_public_config`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MpcPublicConfigDto {
+    #[serde(deserialize_with = "deserialize_chain_id")]
+    chain_id: u64,
+    #[serde(deserialize_with = "deserialize_domain_id")]
+    domain_id: String,
+    #[serde(deserialize_with = "deserialize_active_key_id")]
+    active_key_id: String,
+    #[serde(deserialize_with = "deserialize_suite")]
+    suite: String,
+    #[serde(deserialize_with = "deserialize_public_key")]
+    public_key: String,
+    #[serde(deserialize_with = "deserialize_approved_enclave_measurement")]
+    approved_enclave_measurement: String,
+}
+
 /// Parse the JSON payload served by an MPC endpoint into an
 /// [`MpcPublicConfig`]. Surfaces the first wire-shape failure encountered;
 /// compatibility checks are deliberately not part of parsing.
 pub fn parse_mpc_public_config(text: &str) -> Result<MpcPublicConfig, MpcConfigParseError> {
-    let mut object = parse_object(text)?;
-    let chain_id = object.take_uint("chain_id")?;
-    let domain_id_hex = object.take_string("domain_id")?;
-    let active_key_id_hex = object.take_string("active_key_id")?;
-    let suite_text = object.take_string("suite")?;
-    let public_key_hex = object.take_string("public_key")?;
-    let approved_enclave_measurement_hex = object.take_string("approved_enclave_measurement")?;
-    object.finish()?;
+    reject_json_string_escape_in_top_level_object(text)?;
+    let dto: MpcPublicConfigDto =
+        serde_json::from_str(text).map_err(map_serde_json_to_mpc_parse_error)?;
 
-    let domain_id_bytes = decode_hex_lower(&domain_id_hex, "domain_id", DOMAIN_ID_LEN)?;
-    let active_key_id_bytes = decode_hex_lower(&active_key_id_hex, "active_key_id", KEY_ID_LEN)?;
+    let domain_id_bytes = decode_hex_lower(&dto.domain_id, "domain_id", DOMAIN_ID_LEN)?;
+    let active_key_id_bytes = decode_hex_lower(&dto.active_key_id, "active_key_id", KEY_ID_LEN)?;
     let approved_enclave_measurement_bytes = decode_hex_lower(
-        &approved_enclave_measurement_hex,
+        &dto.approved_enclave_measurement,
         "approved_enclave_measurement",
         ATTESTATION_DIGEST_LEN,
     )?;
-
-    let suite = MpcSuite::from_wire_name(&suite_text).ok_or(MpcConfigParseError::UnknownSuite)?;
-    let public_key = decode_hex_lower_variable(&public_key_hex, "public_key")
+    let suite = MpcSuite::from_wire_name(&dto.suite).ok_or(MpcConfigParseError::UnknownSuite)?;
+    let public_key = decode_hex_lower_variable(&dto.public_key, "public_key")
         .map_err(MpcConfigParseError::InvalidPublicKey)?;
 
     Ok(MpcPublicConfig {
-        chain_id: ChainId(chain_id),
+        chain_id: ChainId(dto.chain_id),
         domain_id: DomainId(to_fixed::<DOMAIN_ID_LEN>(domain_id_bytes)),
         active_key_id: KeyId(to_fixed::<KEY_ID_LEN>(active_key_id_bytes)),
         suite,
@@ -285,6 +302,243 @@ pub fn parse_mpc_public_config(text: &str) -> Result<MpcPublicConfig, MpcConfigP
             approved_enclave_measurement_bytes,
         )),
     })
+}
+
+fn reject_json_string_escape_in_top_level_object(text: &str) -> Result<(), JsonParseError> {
+    let Some(start) = first_non_whitespace(text) else {
+        return Ok(());
+    };
+    if text.as_bytes()[start] != b'{' {
+        return Ok(());
+    }
+
+    let mut depth = 1usize;
+    let mut in_string = false;
+    let mut reject_current_string = false;
+    let mut escaped = false;
+    for byte in text.bytes().skip(start + 1) {
+        if in_string {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match byte {
+                b'\\' if reject_current_string => {
+                    return Err(JsonParseError::UnsupportedStringEscape);
+                }
+                b'\\' => escaped = true,
+                b'"' => {
+                    in_string = false;
+                    reject_current_string = false;
+                }
+                _ => {}
+            }
+            continue;
+        }
+
+        match byte {
+            b'"' => {
+                in_string = true;
+                reject_current_string = depth == 1;
+            }
+            b'{' | b'[' => depth += 1,
+            b'}' | b']' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Ok(());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+fn first_non_whitespace(text: &str) -> Option<usize> {
+    text.bytes()
+        .position(|byte| !matches!(byte, b' ' | b'\t' | b'\n' | b'\r'))
+}
+
+/// Map a serde_json parse error to a sanitized [`MpcConfigParseError`].
+/// The serde_json error message is inspected only to classify the failure
+/// category; raw message text is never forwarded to error values so offending
+/// input fragments (e.g. a public-key string) cannot leak.
+fn map_serde_json_to_mpc_parse_error(err: serde_json::Error) -> MpcConfigParseError {
+    let message = err.to_string();
+    if let Some(error) = marker_to_mpc_json_error(&message) {
+        return MpcConfigParseError::Json(error);
+    }
+    if let Some(field) = extract_missing_mpc_field(&message) {
+        return MpcConfigParseError::Json(JsonParseError::MissingField { field });
+    }
+    if message.starts_with("unknown field") {
+        return MpcConfigParseError::Json(JsonParseError::UnexpectedField);
+    }
+    if message.starts_with("duplicate field") {
+        return MpcConfigParseError::Json(JsonParseError::UnexpectedToken {
+            expected: "unique field",
+        });
+    }
+    if message.starts_with("trailing characters") {
+        return MpcConfigParseError::Json(JsonParseError::TrailingContent);
+    }
+    if err.is_eof() {
+        return MpcConfigParseError::Json(JsonParseError::UnexpectedEndOfInput {
+            expected: "object",
+        });
+    }
+    MpcConfigParseError::Json(JsonParseError::UnexpectedToken { expected: "object" })
+}
+
+fn deserialize_chain_id<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::Number(number) => number
+            .as_u64()
+            .ok_or_else(|| D::Error::custom(invalid_unsigned_marker("chain_id"))),
+        _ => Err(D::Error::custom(field_shape_marker(
+            "chain_id",
+            "unsigned integer",
+        ))),
+    }
+}
+
+fn deserialize_domain_id<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_string_field(deserializer, "domain_id")
+}
+
+fn deserialize_active_key_id<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_string_field(deserializer, "active_key_id")
+}
+
+fn deserialize_suite<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_string_field(deserializer, "suite")
+}
+
+fn deserialize_public_key<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_string_field(deserializer, "public_key")
+}
+
+fn deserialize_approved_enclave_measurement<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_string_field(deserializer, "approved_enclave_measurement")
+}
+
+fn deserialize_string_field<'de, D>(
+    deserializer: D,
+    field: &'static str,
+) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::String(value) => Ok(value),
+        _ => Err(D::Error::custom(field_shape_marker(field, "string"))),
+    }
+}
+
+const MPC_SERDE_ERROR_PREFIX: &str = "__mpc_config_json_error__:";
+
+fn field_shape_marker(field: &'static str, expected: &'static str) -> String {
+    format!(
+        "{MPC_SERDE_ERROR_PREFIX}field_shape:{field}:{}",
+        marker_expected(expected)
+    )
+}
+
+fn invalid_unsigned_marker(field: &'static str) -> String {
+    format!("{MPC_SERDE_ERROR_PREFIX}invalid_unsigned:{field}")
+}
+
+fn marker_expected(expected: &'static str) -> &'static str {
+    match expected {
+        "unsigned integer" => "unsigned_integer",
+        "string" => "string",
+        other => other,
+    }
+}
+
+fn unmarker_expected(expected: &str) -> &'static str {
+    match expected {
+        "unsigned_integer" => "unsigned integer",
+        "string" => "string",
+        _ => "value",
+    }
+}
+
+fn marker_to_mpc_json_error(message: &str) -> Option<JsonParseError> {
+    let marker = serde_error_marker(message)?;
+    let parts: Vec<&str> = marker.split(':').collect();
+    match parts.as_slice() {
+        ["field_shape", field, expected] => Some(JsonParseError::FieldShape {
+            field: known_mpc_field(field)?,
+            expected: unmarker_expected(expected),
+        }),
+        ["invalid_unsigned", field] => Some(JsonParseError::InvalidUnsignedNumber {
+            field: known_mpc_field(field)?,
+        }),
+        _ => None,
+    }
+}
+
+fn serde_error_marker(message: &str) -> Option<&str> {
+    if let Some(marker) = message.strip_prefix(MPC_SERDE_ERROR_PREFIX) {
+        return Some(marker.split_whitespace().next().unwrap_or_default());
+    }
+
+    if !message.starts_with("invalid type:") {
+        return None;
+    }
+
+    let expected_marker = format!("expected {MPC_SERDE_ERROR_PREFIX}");
+    let start = message.find(&expected_marker)?;
+    let marker = &message[start + expected_marker.len()..];
+    Some(marker.split_whitespace().next().unwrap_or_default())
+}
+
+/// Scan the known MPC config field names against a serde_json missing-field
+/// error message. Returns the static field name when matched, or `None` if
+/// the message does not name a known field (prevents user-content leakage).
+fn extract_missing_mpc_field(message: &str) -> Option<&'static str> {
+    known_mpc_fields()
+        .iter()
+        .copied()
+        .find(|field| message.starts_with(&format!("missing field `{field}`")))
+}
+
+fn known_mpc_field(field: &str) -> Option<&'static str> {
+    known_mpc_fields()
+        .iter()
+        .copied()
+        .find(|known| *known == field)
+}
+
+fn known_mpc_fields() -> &'static [&'static str] {
+    &[
+        "chain_id",
+        "domain_id",
+        "active_key_id",
+        "suite",
+        "public_key",
+        "approved_enclave_measurement",
+    ]
 }
 
 fn map_source_error(error: MpcSourceError) -> MpcConfigLoadError {

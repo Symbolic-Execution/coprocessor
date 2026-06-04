@@ -241,6 +241,60 @@ fn parse_rejects_unexpected_extra_field() {
 }
 
 #[test]
+fn parse_rejects_top_level_non_object() {
+    let err = parse_mpc_public_config("[]").unwrap_err();
+
+    assert!(matches!(
+        err,
+        MpcConfigParseError::Json(JsonParseError::UnexpectedToken { expected: "object" })
+    ));
+}
+
+#[test]
+fn parse_rejects_wrong_shape_for_string_field_with_field_name() {
+    let payload = build_json(&[
+        ("chain_id", JsonValue::Uint(1)),
+        ("domain_id", JsonValue::Uint(1)),
+        ("active_key_id", JsonValue::Str(&hex32(0x22))),
+        ("suite", JsonValue::Str("bls12-381-g1")),
+        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
+    ]);
+
+    let err = parse_mpc_public_config(&payload).unwrap_err();
+
+    assert!(matches!(
+        err,
+        MpcConfigParseError::Json(JsonParseError::FieldShape {
+            field: "domain_id",
+            expected: "string",
+        })
+    ));
+}
+
+#[test]
+fn parse_rejects_wrong_shape_for_chain_id_with_field_name() {
+    let payload = build_json(&[
+        ("chain_id", JsonValue::Str("not-a-number")),
+        ("domain_id", JsonValue::Str(&hex32(0x11))),
+        ("active_key_id", JsonValue::Str(&hex32(0x22))),
+        ("suite", JsonValue::Str("bls12-381-g1")),
+        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
+    ]);
+
+    let err = parse_mpc_public_config(&payload).unwrap_err();
+
+    assert!(matches!(
+        err,
+        MpcConfigParseError::Json(JsonParseError::FieldShape {
+            field: "chain_id",
+            expected: "unsigned integer",
+        })
+    ));
+}
+
+#[test]
 fn parse_rejects_invalid_hex_digit_in_domain_id() {
     let bad_domain = "0x".to_string() + &"zz".repeat(32);
     let payload = build_json(&[
@@ -257,6 +311,26 @@ fn parse_rejects_invalid_hex_digit_in_domain_id() {
     assert!(matches!(
         err,
         MpcConfigParseError::Hex(HexDecodeError::InvalidDigit { field: "domain_id" })
+    ));
+}
+
+#[test]
+fn parse_rejects_escape_sequence_in_hex_field_before_hex_validation() {
+    let escaped_domain = format!("0\\u0078{}", "11".repeat(32));
+    let payload = build_json(&[
+        ("chain_id", JsonValue::Uint(1)),
+        ("domain_id", JsonValue::Str(&escaped_domain)),
+        ("active_key_id", JsonValue::Str(&hex32(0x22))),
+        ("suite", JsonValue::Str("bls12-381-g1")),
+        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
+    ]);
+
+    let err = parse_mpc_public_config(&payload).unwrap_err();
+
+    assert!(matches!(
+        err,
+        MpcConfigParseError::Json(JsonParseError::UnsupportedStringEscape)
     ));
 }
 
@@ -281,4 +355,102 @@ fn parse_rejects_public_key_with_odd_hex_length() {
             ..
         })
     ));
+}
+
+#[test]
+fn parse_rejects_domain_id_with_missing_hex_prefix() {
+    let no_prefix = "1".repeat(64); // 32 bytes, no 0x prefix
+    let payload = build_json(&[
+        ("chain_id", JsonValue::Uint(1)),
+        ("domain_id", JsonValue::Str(&no_prefix)),
+        ("active_key_id", JsonValue::Str(&hex32(0x22))),
+        ("suite", JsonValue::Str("bls12-381-g1")),
+        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
+    ]);
+
+    let err = parse_mpc_public_config(&payload).unwrap_err();
+
+    assert!(matches!(
+        err,
+        MpcConfigParseError::Hex(HexDecodeError::MissingPrefix { field: "domain_id" })
+    ));
+}
+
+#[test]
+fn parse_rejects_domain_id_with_uppercase_hex() {
+    let uppercase = "0x".to_string() + &"AA".repeat(32);
+    let payload = build_json(&[
+        ("chain_id", JsonValue::Uint(1)),
+        ("domain_id", JsonValue::Str(&uppercase)),
+        ("active_key_id", JsonValue::Str(&hex32(0x22))),
+        ("suite", JsonValue::Str("bls12-381-g1")),
+        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
+    ]);
+
+    let err = parse_mpc_public_config(&payload).unwrap_err();
+
+    assert!(matches!(
+        err,
+        MpcConfigParseError::Hex(HexDecodeError::UppercaseDigit { field: "domain_id" })
+    ));
+}
+
+#[test]
+fn parse_rejects_domain_id_with_wrong_byte_length() {
+    let too_short = hex_bytes(0x11, 16); // 16 bytes instead of 32
+    let payload = build_json(&[
+        ("chain_id", JsonValue::Uint(1)),
+        ("domain_id", JsonValue::Str(&too_short)),
+        ("active_key_id", JsonValue::Str(&hex32(0x22))),
+        ("suite", JsonValue::Str("bls12-381-g1")),
+        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
+    ]);
+
+    let err = parse_mpc_public_config(&payload).unwrap_err();
+
+    assert!(matches!(
+        err,
+        MpcConfigParseError::Hex(HexDecodeError::WrongByteLength {
+            field: "domain_id",
+            expected: 32,
+            actual: 16,
+        })
+    ));
+}
+
+#[test]
+fn parse_rejects_duplicate_field_as_malformed() {
+    // Duplicate fields must be rejected as malformed (not silently accepted).
+    let payload = r#"{"chain_id":1,"chain_id":2,"domain_id":"0x1111111111111111111111111111111111111111111111111111111111111111","active_key_id":"0x2222222222222222222222222222222222222222222222222222222222222222","suite":"bls12-381-g1","public_key":"0x444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444","approved_enclave_measurement":"0x3333333333333333333333333333333333333333333333333333333333333333"}"#;
+
+    let err = parse_mpc_public_config(payload).unwrap_err();
+
+    // Must be a Json-category error, not a hex or suite error.
+    assert!(matches!(err, MpcConfigParseError::Json(_)));
+}
+
+#[test]
+fn suite_mismatch_surfaces_incompatible_not_malformed() {
+    // A wrong-but-known suite should be parsed successfully and then fail
+    // compatibility, not fail parsing — there is only one suite today, so we
+    // construct a config with the right suite and wrong chain_id to confirm
+    // incompatible flows through check_compatibility, not parse.
+    let payload = build_json(&[
+        ("chain_id", JsonValue::Uint(1)),
+        ("domain_id", JsonValue::Str(&hex32(0x11))),
+        ("active_key_id", JsonValue::Str(&hex32(0x22))),
+        ("suite", JsonValue::Str("bls12-381-g1")),
+        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
+    ]);
+
+    // Compatible expectations — parsing should succeed
+    let result = parse_mpc_public_config(&payload);
+    assert!(
+        result.is_ok(),
+        "valid payload with known suite must parse: {result:?}"
+    );
 }

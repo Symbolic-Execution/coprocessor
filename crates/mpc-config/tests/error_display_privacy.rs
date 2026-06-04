@@ -7,8 +7,8 @@
 use coprocessor_ciphertext_binding::DomainId;
 use coprocessor_handle_graph_core::ChainId;
 use coprocessor_mpc_config::{
-    HexDecodeError, JsonParseError, MpcConfigIncompatibility, MpcConfigLoadError,
-    MpcConfigParseError, MpcSourceError, MpcSuite,
+    parse_mpc_public_config, HexDecodeError, JsonParseError, MpcConfigIncompatibility,
+    MpcConfigLoadError, MpcConfigParseError, MpcSourceError, MpcSuite,
 };
 
 const FORBIDDEN_DISPLAY_FRAGMENTS: &[&str] = &[
@@ -112,6 +112,45 @@ fn parse_error_display_variants_are_non_secret() {
         let display = format!("{}", err);
         assert_display_is_non_secret("MpcConfigParseError", &display);
     }
+}
+
+#[test]
+fn serde_parse_error_debug_does_not_expose_raw_input_fragments() {
+    let secret_value_payload = format!(
+        r#"{{"chain_id":"PAYLOAD_SECRET_42","domain_id":"{}","active_key_id":"{}","suite":"bls12-381-g1","public_key":"{}","approved_enclave_measurement":"{}"}}"#,
+        hex_bytes(0x11, 32),
+        hex_bytes(0x22, 32),
+        hex_bytes(0x44, 48),
+        hex_bytes(0x33, 32),
+    );
+    let err = parse_mpc_public_config(&secret_value_payload).unwrap_err();
+    let debug = format!("{:?}", err);
+    assert!(
+        !debug.contains("PAYLOAD_SECRET_42"),
+        "serde parse error must not expose field content: {debug}",
+    );
+
+    let secret_field_payload = format!(
+        r#"{{"chain_id":1,"domain_id":"{}","active_key_id":"{}","suite":"bls12-381-g1","public_key":"{}","approved_enclave_measurement":"{}","PAYLOAD_SECRET_FIELD":0}}"#,
+        hex_bytes(0x11, 32),
+        hex_bytes(0x22, 32),
+        hex_bytes(0x44, 48),
+        hex_bytes(0x33, 32),
+    );
+    let err = parse_mpc_public_config(&secret_field_payload).unwrap_err();
+    let debug = format!("{:?}", err);
+    assert!(
+        !debug.contains("PAYLOAD_SECRET_FIELD"),
+        "serde parse error must not expose unexpected field names: {debug}",
+    );
+}
+
+fn hex_bytes(byte: u8, len: usize) -> String {
+    let mut out = String::from("0x");
+    for _ in 0..len {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
