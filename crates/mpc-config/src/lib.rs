@@ -30,7 +30,9 @@ pub use coprocessor_transport_json::{HexDecodeError, JsonParseError};
 
 use thiserror::Error;
 
-use coprocessor_transport_json::{decode_hex_lower, decode_hex_lower_variable, parse_object};
+use serde::Deserialize;
+
+use coprocessor_transport_json::{decode_hex_lower, decode_hex_lower_variable};
 
 const DOMAIN_ID_LEN: usize = 32;
 const KEY_ID_LEN: usize = 32;
@@ -250,33 +252,41 @@ pub fn load_mpc_public_config(
     Ok(config)
 }
 
+/// Wire-shaped serde DTO for the MPC public configuration JSON payload.
+/// All hex fields are kept as `String` so hex validation is delegated to the
+/// transport codec after parsing; this keeps the malformed-vs-incompatible
+/// split entirely in `load_mpc_public_config`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MpcPublicConfigDto {
+    chain_id: u64,
+    domain_id: String,
+    active_key_id: String,
+    suite: String,
+    public_key: String,
+    approved_enclave_measurement: String,
+}
+
 /// Parse the JSON payload served by an MPC endpoint into an
 /// [`MpcPublicConfig`]. Surfaces the first wire-shape failure encountered;
 /// compatibility checks are deliberately not part of parsing.
 pub fn parse_mpc_public_config(text: &str) -> Result<MpcPublicConfig, MpcConfigParseError> {
-    let mut object = parse_object(text)?;
-    let chain_id = object.take_uint("chain_id")?;
-    let domain_id_hex = object.take_string("domain_id")?;
-    let active_key_id_hex = object.take_string("active_key_id")?;
-    let suite_text = object.take_string("suite")?;
-    let public_key_hex = object.take_string("public_key")?;
-    let approved_enclave_measurement_hex = object.take_string("approved_enclave_measurement")?;
-    object.finish()?;
+    let dto: MpcPublicConfigDto =
+        serde_json::from_str(text).map_err(map_serde_json_to_mpc_parse_error)?;
 
-    let domain_id_bytes = decode_hex_lower(&domain_id_hex, "domain_id", DOMAIN_ID_LEN)?;
-    let active_key_id_bytes = decode_hex_lower(&active_key_id_hex, "active_key_id", KEY_ID_LEN)?;
+    let domain_id_bytes = decode_hex_lower(&dto.domain_id, "domain_id", DOMAIN_ID_LEN)?;
+    let active_key_id_bytes = decode_hex_lower(&dto.active_key_id, "active_key_id", KEY_ID_LEN)?;
     let approved_enclave_measurement_bytes = decode_hex_lower(
-        &approved_enclave_measurement_hex,
+        &dto.approved_enclave_measurement,
         "approved_enclave_measurement",
         ATTESTATION_DIGEST_LEN,
     )?;
-
-    let suite = MpcSuite::from_wire_name(&suite_text).ok_or(MpcConfigParseError::UnknownSuite)?;
-    let public_key = decode_hex_lower_variable(&public_key_hex, "public_key")
+    let suite = MpcSuite::from_wire_name(&dto.suite).ok_or(MpcConfigParseError::UnknownSuite)?;
+    let public_key = decode_hex_lower_variable(&dto.public_key, "public_key")
         .map_err(MpcConfigParseError::InvalidPublicKey)?;
 
     Ok(MpcPublicConfig {
-        chain_id: ChainId(chain_id),
+        chain_id: ChainId(dto.chain_id),
         domain_id: DomainId(to_fixed::<DOMAIN_ID_LEN>(domain_id_bytes)),
         active_key_id: KeyId(to_fixed::<KEY_ID_LEN>(active_key_id_bytes)),
         suite,
@@ -285,6 +295,60 @@ pub fn parse_mpc_public_config(text: &str) -> Result<MpcPublicConfig, MpcConfigP
             approved_enclave_measurement_bytes,
         )),
     })
+}
+
+/// Map a serde_json parse error to a sanitized [`MpcConfigParseError`].
+/// The serde_json error message is inspected only to classify the failure
+/// category; raw message text is never forwarded to error values so offending
+/// input fragments (e.g. a public-key string) cannot leak.
+fn map_serde_json_to_mpc_parse_error(err: serde_json::Error) -> MpcConfigParseError {
+    let message = err.to_string();
+    if let Some(field) = extract_missing_mpc_field(&message) {
+        return MpcConfigParseError::Json(JsonParseError::MissingField { field });
+    }
+    if message.starts_with("unknown field") {
+        return MpcConfigParseError::Json(JsonParseError::UnexpectedField);
+    }
+    if message.starts_with("duplicate field") {
+        return MpcConfigParseError::Json(JsonParseError::UnexpectedToken {
+            expected: "unique fields",
+        });
+    }
+    if err.is_data() {
+        // The only non-string field is chain_id; a wrong JSON type there
+        // surfaces as a field-shape failure.
+        return MpcConfigParseError::Json(JsonParseError::FieldShape {
+            field: "chain_id",
+            expected: "unsigned integer",
+        });
+    }
+    if err.is_eof() {
+        return MpcConfigParseError::Json(JsonParseError::UnexpectedEndOfInput {
+            expected: "object",
+        });
+    }
+    MpcConfigParseError::Json(JsonParseError::UnexpectedToken { expected: "object" })
+}
+
+/// Scan the known MPC config field names against a serde_json missing-field
+/// error message. Returns the static field name when matched, or `None` if
+/// the message does not name a known field (prevents user-content leakage).
+fn extract_missing_mpc_field(message: &str) -> Option<&'static str> {
+    known_mpc_fields()
+        .iter()
+        .copied()
+        .find(|field| message.starts_with(&format!("missing field `{field}`")))
+}
+
+fn known_mpc_fields() -> &'static [&'static str] {
+    &[
+        "chain_id",
+        "domain_id",
+        "active_key_id",
+        "suite",
+        "public_key",
+        "approved_enclave_measurement",
+    ]
 }
 
 fn map_source_error(error: MpcSourceError) -> MpcConfigLoadError {

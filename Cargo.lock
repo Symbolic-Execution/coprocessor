@@ -56,6 +56,8 @@ dependencies = [
  "coprocessor-ciphertext-binding",
  "coprocessor-handle-graph-core",
  "coprocessor-transport-json",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 
