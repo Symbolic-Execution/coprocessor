@@ -8,6 +8,59 @@ use coprocessor_transport_json::{
     HexDecodeError, HexIdentifier, JsonParseError, RequestIdHex,
 };
 
+// ---------------------------------------------------------------------------
+// Adversarial sanitization
+//
+// Error Debug/Display output must never echo input bytes. serde_json's error
+// type can embed offending tokens; our mapping discards it entirely and returns
+// only a sanitized variant carrying a field name and expected shape.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn chain_event_ref_field_content_not_exposed_in_error_output() {
+    // Feed a recognizable secret string as a field value that has the wrong
+    // type. Verify the resulting error's Debug representation does not echo it.
+    let json = "{\"chain_id\":\"PAYLOAD_SECRET_42\",\"block_number\":1,\"block_hash\":\"0x00\",\"tx_hash\":\"0x00\",\"log_index\":1}";
+    let err = decode_chain_event_ref(json).unwrap_err();
+    let debug = format!("{:?}", err);
+    assert!(
+        !debug.contains("PAYLOAD_SECRET_42"),
+        "error must not expose field content: {debug}",
+    );
+}
+
+#[test]
+fn unknown_field_cannot_spoof_internal_serde_error_marker() {
+    let json = concat!(
+        "{\"chain_id\":1,",
+        "\"block_number\":1,",
+        "\"block_hash\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",",
+        "\"tx_hash\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",",
+        "\"log_index\":1,",
+        "\"__transport_json_error__:hex:wrong_byte_length:block_hash:32:31 \":1}"
+    );
+    let err = decode_chain_event_ref(json).unwrap_err();
+    assert!(matches!(err, JsonParseError::UnexpectedField));
+}
+
+#[test]
+fn ciphertext_envelope_content_not_exposed_in_error_output() {
+    // Feed a JSON object (not a string) as the ciphertext envelope. The
+    // serde_json error message would normally contain the offending token;
+    // our wrapping must suppress it.
+    let json_not_a_string = "{\"key\":\"PAYLOAD_SECRET_99\"}";
+    let err = decode_system_ciphertext(json_not_a_string).unwrap_err();
+    let debug = format!("{:?}", err);
+    assert!(
+        !debug.contains("PAYLOAD_SECRET_99"),
+        "error must not expose input content: {debug}",
+    );
+    assert!(
+        !debug.contains("key"),
+        "error must not expose field names from malformed input: {debug}",
+    );
+}
+
 #[test]
 fn hex_missing_prefix_uses_field_name() {
     let err = RequestIdHex::from_hex(&"a".repeat(64)).unwrap_err();
@@ -61,6 +114,24 @@ fn base64_with_non_zero_tail_bits_is_rejected() {
 }
 
 #[test]
+fn base64_string_with_json_escape_is_rejected() {
+    let err = decode_system_ciphertext("\"AA\\u003d\\u003d\"").unwrap_err();
+    assert!(matches!(
+        err,
+        CiphertextJsonError::Json(JsonParseError::UnsupportedStringEscape)
+    ));
+}
+
+#[test]
+fn escaped_string_after_ciphertext_envelope_is_rejected_as_trailing_content() {
+    let err = decode_system_ciphertext("\"AAAA\" \"trailing\\u002dcontent\"").unwrap_err();
+    assert!(matches!(
+        err,
+        CiphertextJsonError::Json(JsonParseError::TrailingContent)
+    ));
+}
+
+#[test]
 fn empty_string_envelope_is_rejected_as_envelope_error() {
     // Empty string is a valid JSON string and valid (empty) base64, so the
     // failure surfaces as an envelope decode error.
@@ -84,10 +155,10 @@ fn chain_event_ref_with_unclosed_object_is_rejected() {
 
 #[test]
 fn chain_event_ref_with_missing_colon_between_key_and_value_is_rejected() {
+    // serde_json rejects the malformed JSON as a syntax error. The expected
+    // string changes from the hand-rolled parser's "':'" to a generic
+    // "valid JSON" category — the rejection is stable but the label is not.
     let json = "{\"chain_id\" 1}";
     let err = decode_chain_event_ref(json).unwrap_err();
-    assert!(matches!(
-        err,
-        JsonParseError::UnexpectedToken { expected: "':'" }
-    ));
+    assert!(matches!(err, JsonParseError::UnexpectedToken { .. }));
 }

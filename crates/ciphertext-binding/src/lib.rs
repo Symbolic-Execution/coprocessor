@@ -5,6 +5,16 @@
 //! starting with the version byte and an integer kind discriminant. Decoders
 //! surface domain-shaped, non-secret errors so callers can map them to API
 //! responses without leaking ciphertext or key material.
+//!
+//! # CBOR implementation
+//!
+//! The minimal CBOR reader/writer at the bottom of this file is intentional.
+//! A spike (issue #84) evaluated `minicbor` as a replacement and found that
+//! it does not reject non-canonical (non-shortest-form) integer and length
+//! encodings on decode, requiring a hand-written guard that reproduces the
+//! existing `read_header` check. The manual implementation was retained.
+//! See the repository-level `docs/cbor-spike-decision.md` for the full
+//! rationale.
 
 use thiserror::Error;
 
