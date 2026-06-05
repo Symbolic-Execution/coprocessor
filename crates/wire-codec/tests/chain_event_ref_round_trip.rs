@@ -4,7 +4,7 @@
 //! for the three numeric fields.
 
 use coprocessor_handle_graph_core::{ChainEventRef, ChainId};
-use coprocessor_transport_json::{
+use coprocessor_wire_codec::{
     decode_chain_event_ref, encode_chain_event_ref, HexDecodeError, JsonParseError,
 };
 

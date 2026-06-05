@@ -543,27 +543,18 @@ dependencies = [
  "coprocessor-ciphertext-binding",
  "coprocessor-enclave-runtime",
  "coprocessor-handle-graph-core",
- "coprocessor-mpc-client",
+ "coprocessor-mpc",
  "coprocessor-nitro-enclave",
  "thiserror",
 ]
 
 [[package]]
-name = "coprocessor-mpc-client"
+name = "coprocessor-mpc"
 version = "0.1.0"
 dependencies = [
  "coprocessor-ciphertext-binding",
  "coprocessor-handle-graph-core",
- "thiserror",
-]
-
-[[package]]
-name = "coprocessor-mpc-config"
-version = "0.1.0"
-dependencies = [
- "coprocessor-ciphertext-binding",
- "coprocessor-handle-graph-core",
- "coprocessor-transport-json",
+ "coprocessor-wire-codec",
  "serde",
  "serde_json",
  "thiserror",
@@ -578,7 +569,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "coprocessor-transport-json"
+name = "coprocessor-wire-codec"
 version = "0.1.0"
 dependencies = [
  "base64",

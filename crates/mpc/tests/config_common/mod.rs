@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 
-use coprocessor_mpc_config::{
+use coprocessor_mpc::config::{
     AttestationDigest, ChainId, DomainId, KeyId, MpcConfigExpectations, MpcConfigSource,
     MpcSourceError, MpcSuite,
 };

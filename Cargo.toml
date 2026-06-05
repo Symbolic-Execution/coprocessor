@@ -3,10 +3,9 @@ members = [
     "crates/coprocessor-host",
     "crates/handle-graph-core",
     "crates/ciphertext-binding",
-    "crates/transport-json",
+    "crates/wire-codec",
     "crates/enclave-runtime",
-    "crates/mpc-config",
-    "crates/mpc-client",
+    "crates/mpc",
     "crates/nitro-enclave",
 ]
 resolver = "2"

@@ -29,7 +29,7 @@ use coprocessor_host::{
     ChainEventSource, ChainView, ChainViewPoll, CoprocessorHost, HandleStateView, HostConfig,
     RequestId,
 };
-use coprocessor_mpc_client::{
+use coprocessor_mpc::{
     MpcSourceError, MpcToEnclaveResponse, MpcToEnclaveSource, ToEnclaveTransformationRequest,
 };
 use coprocessor_nitro_enclave::{

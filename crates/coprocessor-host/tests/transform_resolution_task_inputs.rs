@@ -26,7 +26,7 @@ use coprocessor_handle_graph_core::{
 use coprocessor_host::{
     CoprocessorHost, HostConfig, ResolutionTask, TransformResolutionInputsError,
 };
-use coprocessor_mpc_client::{
+use coprocessor_mpc::{
     MpcSourceError, MpcToEnclaveResponse, MpcToEnclaveSource, ToEnclaveTransformationError,
     ToEnclaveTransformationRequest,
 };

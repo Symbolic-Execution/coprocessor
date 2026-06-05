@@ -9,14 +9,14 @@
 //! never carry the enclave public key, attestation bytes, ciphertext bytes,
 //! or wrapped-key bytes.
 
-mod common;
+mod to_enclave_common;
 
-use coprocessor_mpc_client::{
+use coprocessor_mpc::{
     request_to_enclave_transformation, MpcSourceError, MpcToEnclaveResponse,
     ToEnclaveTransformationError,
 };
 
-use common::{
+use to_enclave_common::{
     attestation_bytes, enclave_ciphertext_for_test_request, enclave_public_key,
     system_ciphertext_for_test_request, valid_request, FakeMpcOutcome, FakeMpcServer,
     TEST_ATTESTATION_DIGEST, TEST_CHAIN_ID, TEST_HANDLE_ID, TEST_REQUEST_ID,

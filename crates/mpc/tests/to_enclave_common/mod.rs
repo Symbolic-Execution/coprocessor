@@ -7,7 +7,7 @@ use coprocessor_ciphertext_binding::{
     SystemCiphertextV1, SystemHandleAadV1,
 };
 use coprocessor_handle_graph_core::ChainId;
-use coprocessor_mpc_client::{
+use coprocessor_mpc::{
     MpcSourceError, MpcToEnclaveResponse, MpcToEnclaveSource, ToEnclaveTransformationRequest,
 };
 

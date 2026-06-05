@@ -3,7 +3,7 @@
 //! error variant that an API layer can map to a fixed error code. Tests in
 //! this file exist to lock down the error shape, not to round-trip values.
 
-use coprocessor_transport_json::{
+use coprocessor_wire_codec::{
     decode_chain_event_ref, decode_system_ciphertext, Base64DecodeError, CiphertextJsonError,
     HexDecodeError, HexIdentifier, JsonParseError, RequestIdHex,
 };

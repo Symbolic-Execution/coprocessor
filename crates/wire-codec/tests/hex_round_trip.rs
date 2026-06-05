@@ -10,7 +10,7 @@ use coprocessor_ciphertext_binding::{
 use coprocessor_handle_graph_core::{
     ContractAddress as CoreContractAddress, DomainId as CoreDomainId, HandleId as CoreHandleId,
 };
-use coprocessor_transport_json::{
+use coprocessor_wire_codec::{
     AttestationDigestHex, BlockHashHex, ContractAddressHex, DomainIdHex, HandleIdHex,
     HexDecodeError, HexIdentifier, KeyIdHex, ReaderIdHex, RequestIdHex, TxHashHex,
 };

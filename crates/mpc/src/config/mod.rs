@@ -2,7 +2,7 @@
 //!
 //! The Coprocessor needs the MPC public control-plane configuration before it
 //! can schedule plaintext materialization, ask MPC for To-Enclave
-//! Transformations, or check Enclave Measurements. This crate owns three
+//! Transformations, or check Enclave Measurements. This module owns three
 //! concerns:
 //!
 //! 1. The [`MpcPublicConfig`] value object — the DomainId, ChainId, active
@@ -32,7 +32,7 @@ mod serde_mapping;
 mod source;
 mod validation;
 
-pub use coprocessor_transport_json::{HexDecodeError, JsonParseError};
+pub use coprocessor_wire_codec::{HexDecodeError, JsonParseError};
 
 pub use compat::MpcConfigIncompatibility;
 pub use config::{AttestationDigest, ChainId, DomainId, KeyId};

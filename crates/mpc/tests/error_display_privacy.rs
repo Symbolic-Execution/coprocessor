@@ -6,7 +6,7 @@
 
 use coprocessor_ciphertext_binding::DomainId;
 use coprocessor_handle_graph_core::ChainId;
-use coprocessor_mpc_config::{
+use coprocessor_mpc::config::{
     parse_mpc_public_config, HexDecodeError, JsonParseError, MpcConfigIncompatibility,
     MpcConfigLoadError, MpcConfigParseError, MpcSourceError, MpcSuite,
 };

@@ -4,7 +4,7 @@
 //! same rules the binary codec enforces.
 
 use coprocessor_ciphertext_binding::SystemCiphertextV1;
-use coprocessor_transport_json::{
+use coprocessor_wire_codec::{
     decode_enclave_ciphertext, decode_reader_ciphertext, decode_system_ciphertext,
     encode_enclave_ciphertext, encode_reader_ciphertext, encode_system_ciphertext,
     CiphertextJsonError,
