@@ -17,8 +17,7 @@
 //! and authenticated encryption.
 
 use coprocessor_ciphertext_binding::{
-    AttestationDigest, DomainId, EnclaveAadV1, EnclaveCiphertextV1, HandleId as AadHandleId, KeyId,
-    RequestId, SystemCiphertextV1, SystemHandleAadV1,
+    AttestationDigest, DomainId, EnclaveCiphertextV1, KeyId, RequestId, SystemCiphertextV1,
 };
 use coprocessor_handle_graph_core::{HandleKey, HandleType};
 
@@ -27,15 +26,18 @@ use crate::{EnclaveExecutionError, EnclaveExecutionOutcome, EnclaveRuntime, Reso
 use super::operation::{
     bool_to_payload, payload_to_bool, type_tag_for_handle_type, SupportedOperation,
 };
-use super::sealing::{seal_payload, unseal_payload};
-use super::validation::{input_aad_error, InputAadField};
+use super::result_packaging::{seal_input, seal_output, unseal_output};
+use super::sealing::unseal_payload;
+use super::validation::{
+    input_aad_error, verify_input_aad, verify_task_attestation, InputAadField,
+};
 
 /// AAD version the local Enclave produces and accepts. Anything else fails
 /// AAD verification.
-const AAD_VERSION: u8 = 1;
+pub(super) const AAD_VERSION: u8 = 1;
 
 /// Envelope version the local Enclave stamps on the result.
-const ENVELOPE_VERSION: u8 = 1;
+pub(super) const ENVELOPE_VERSION: u8 = 1;
 
 /// Configuration the local Enclave is bound to. In production these values
 /// come from attested key material and the chain context the host monitors.
@@ -89,7 +91,8 @@ impl LocalEnclaveRuntime {
         input_handle_key: HandleKey,
         plaintext: [u8; 32],
     ) -> EnclaveCiphertextV1 {
-        self.seal_input(
+        seal_input(
+            &self.config,
             request_id,
             input_handle_key,
             type_tag_for_handle_type(HandleType::Suint256),
@@ -106,7 +109,8 @@ impl LocalEnclaveRuntime {
         input_handle_key: HandleKey,
         value: bool,
     ) -> EnclaveCiphertextV1 {
-        self.seal_input(
+        seal_input(
+            &self.config,
             request_id,
             input_handle_key,
             type_tag_for_handle_type(HandleType::Sbool),
@@ -119,7 +123,11 @@ impl LocalEnclaveRuntime {
     /// belong to this runtime (wrong AAD shape, wrong key id, or wrong
     /// ciphertext length) or its AAD's `type_tag` is not `suint256`.
     pub fn unseal_suint256_output(&self, ciphertext: &SystemCiphertextV1) -> Option<[u8; 32]> {
-        self.unseal_output(ciphertext, type_tag_for_handle_type(HandleType::Suint256))
+        unseal_output(
+            &self.config,
+            ciphertext,
+            type_tag_for_handle_type(HandleType::Suint256),
+        )
     }
 
     /// Test-only helper: unseal a [`SystemCiphertextV1`] produced by
@@ -127,117 +135,12 @@ impl LocalEnclaveRuntime {
     /// type tag. Returns `None` if the envelope does not belong to this
     /// runtime or its `type_tag` is not `sbool`.
     pub fn unseal_sbool_output(&self, ciphertext: &SystemCiphertextV1) -> Option<bool> {
-        let payload =
-            self.unseal_output(ciphertext, type_tag_for_handle_type(HandleType::Sbool))?;
+        let payload = unseal_output(
+            &self.config,
+            ciphertext,
+            type_tag_for_handle_type(HandleType::Sbool),
+        )?;
         Some(payload_to_bool(payload))
-    }
-
-    fn seal_input(
-        &self,
-        request_id: RequestId,
-        input_handle_key: HandleKey,
-        type_tag: &str,
-        plaintext: [u8; 32],
-    ) -> EnclaveCiphertextV1 {
-        let aad = self.build_enclave_aad(request_id, input_handle_key, type_tag);
-        let aad_bytes = aad.encode();
-        let sealed = seal_payload(&self.config.sealing_secret, &aad_bytes, plaintext);
-        EnclaveCiphertextV1 {
-            version: ENVELOPE_VERSION,
-            aad: aad_bytes,
-            wrapped_key: sealed.wrapped_key,
-            ciphertext: sealed.ciphertext,
-        }
-    }
-
-    fn unseal_output(
-        &self,
-        ciphertext: &SystemCiphertextV1,
-        expected_type_tag: &str,
-    ) -> Option<[u8; 32]> {
-        let aad = SystemHandleAadV1::decode(&ciphertext.aad).ok()?;
-        if aad.version != AAD_VERSION
-            || aad.chain_id != self.config.chain_id
-            || aad.domain_id != self.config.domain_id
-            || aad.type_tag != expected_type_tag
-            || aad.key_id != self.config.system_key_id
-        {
-            return None;
-        }
-        unseal_payload(
-            &self.config.sealing_secret,
-            &ciphertext.aad,
-            &ciphertext.ciphertext,
-        )
-    }
-
-    fn build_enclave_aad(
-        &self,
-        request_id: RequestId,
-        input_handle_key: HandleKey,
-        type_tag: &str,
-    ) -> EnclaveAadV1 {
-        EnclaveAadV1 {
-            version: AAD_VERSION,
-            chain_id: self.config.chain_id,
-            domain_id: self.config.domain_id,
-            request_id,
-            handle_id: AadHandleId(input_handle_key.handle_id.0),
-            type_tag: type_tag.to_string(),
-            attestation_digest: self.config.attestation_digest,
-            key_id: self.config.enclave_key_id,
-        }
-    }
-
-    fn verify_task_attestation(&self, task: &ResolutionTask) -> Result<(), EnclaveExecutionError> {
-        if task.attestation_digest == self.config.attestation_digest {
-            Ok(())
-        } else {
-            Err(EnclaveExecutionError::AttestationVerificationFailure {
-                expected: self.config.attestation_digest,
-                actual: task.attestation_digest,
-            })
-        }
-    }
-
-    fn verify_input_aad(
-        &self,
-        task: &ResolutionTask,
-        input_index: usize,
-        input_handle_key: &HandleKey,
-        ciphertext: &EnclaveCiphertextV1,
-        expected_type_tag: &str,
-    ) -> Result<(), EnclaveExecutionError> {
-        let aad = EnclaveAadV1::decode(&ciphertext.aad)
-            .map_err(|_| input_aad_error(input_index, InputAadField::Decode))?;
-        if aad.version != AAD_VERSION {
-            return Err(input_aad_error(input_index, InputAadField::Version));
-        }
-        if aad.chain_id != self.config.chain_id {
-            return Err(input_aad_error(input_index, InputAadField::ChainId));
-        }
-        if aad.domain_id != self.config.domain_id {
-            return Err(input_aad_error(input_index, InputAadField::DomainId));
-        }
-        if aad.request_id != task.request_id {
-            return Err(input_aad_error(input_index, InputAadField::RequestId));
-        }
-        if aad.handle_id.0 != input_handle_key.handle_id.0 {
-            return Err(input_aad_error(input_index, InputAadField::HandleId));
-        }
-        if aad.type_tag != expected_type_tag {
-            return Err(input_aad_error(input_index, InputAadField::TypeTag));
-        }
-        if aad.attestation_digest != self.config.attestation_digest {
-            return Err(input_aad_error(
-                input_index,
-                InputAadField::AttestationDigest,
-            ));
-        }
-        if aad.key_id != self.config.enclave_key_id {
-            return Err(input_aad_error(input_index, InputAadField::KeyId));
-        }
-        Ok(())
     }
 
     fn unseal_input(&self, ciphertext: &EnclaveCiphertextV1) -> Option<[u8; 32]> {
@@ -247,26 +150,6 @@ impl LocalEnclaveRuntime {
             &ciphertext.ciphertext,
         )
     }
-
-    fn seal_output(&self, task: &ResolutionTask, plaintext: [u8; 32]) -> SystemCiphertextV1 {
-        let type_tag = type_tag_for_handle_type(task.output_handle_type);
-        let aad = SystemHandleAadV1 {
-            version: AAD_VERSION,
-            chain_id: self.config.chain_id,
-            domain_id: self.config.domain_id,
-            handle_id: AadHandleId(task.output_handle_key.handle_id.0),
-            type_tag: type_tag.to_string(),
-            key_id: self.config.system_key_id,
-        };
-        let aad_bytes = aad.encode();
-        let sealed = seal_payload(&self.config.sealing_secret, &aad_bytes, plaintext);
-        SystemCiphertextV1 {
-            version: ENVELOPE_VERSION,
-            aad: aad_bytes,
-            wrapped_key: sealed.wrapped_key,
-            ciphertext: sealed.ciphertext,
-        }
-    }
 }
 
 impl EnclaveRuntime for LocalEnclaveRuntime {
@@ -275,7 +158,7 @@ impl EnclaveRuntime for LocalEnclaveRuntime {
         task: &ResolutionTask,
     ) -> Result<EnclaveExecutionOutcome, EnclaveExecutionError> {
         task.validate_input_count()?;
-        self.verify_task_attestation(task)?;
+        verify_task_attestation(&self.config, task)?;
 
         let evaluator = SupportedOperation::for_task(task)?;
         evaluator.check_arity(task)?;
@@ -289,7 +172,14 @@ impl EnclaveRuntime for LocalEnclaveRuntime {
             .zip(input_type_tags.iter())
             .enumerate()
         {
-            self.verify_input_aad(task, input_index, handle_key, ciphertext, expected_type_tag)?;
+            verify_input_aad(
+                &self.config,
+                task,
+                input_index,
+                handle_key,
+                ciphertext,
+                expected_type_tag,
+            )?;
             let plaintext = self
                 .unseal_input(ciphertext)
                 .ok_or_else(|| input_aad_error(input_index, InputAadField::Decode))?;
@@ -297,7 +187,7 @@ impl EnclaveRuntime for LocalEnclaveRuntime {
         }
 
         let result = evaluator.evaluate(&plaintexts);
-        let system_ciphertext = self.seal_output(task, result);
+        let system_ciphertext = seal_output(&self.config, task, result);
         let receipt = task.materialization_receipt();
         Ok(EnclaveExecutionOutcome {
             system_ciphertext,

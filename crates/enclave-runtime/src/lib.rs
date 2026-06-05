@@ -26,6 +26,7 @@ pub use coprocessor_handle_graph_core::{HandleKey, HandleType, OperationCode};
 
 mod local;
 mod operation;
+mod result_packaging;
 mod sealing;
 mod validation;
 
