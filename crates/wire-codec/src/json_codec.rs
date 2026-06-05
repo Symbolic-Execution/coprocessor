@@ -1,7 +1,7 @@
 //! Minimal hand-rolled JSON codec for the Coprocessor API surface.
 //!
 //! The remaining decoder targets the small subset of JSON still consumed by
-//! `mpc-config`: a flat object whose values are JSON strings or
+//! the MPC config module: a flat object whose values are JSON strings or
 //! unsigned-integer numbers. Nested objects, arrays, floats, escape sequences
 //! inside strings, signed numbers, booleans, and `null` are all rejected with
 //! stable [`JsonParseError`] variants.

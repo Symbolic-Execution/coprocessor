@@ -1,7 +1,7 @@
 /// Internal Coordinator resolution API, scheduler claims, and enclave handoff.
 use coprocessor_enclave_runtime::EnclaveRuntime;
 use coprocessor_handle_graph_core::HandleKey;
-use coprocessor_mpc_client::{EnclaveCiphertextV1, MpcToEnclaveSource};
+use coprocessor_mpc::{EnclaveCiphertextV1, MpcToEnclaveSource};
 use coprocessor_nitro_enclave::EnclaveAttestationSource;
 
 use super::{

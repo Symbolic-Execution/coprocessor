@@ -37,7 +37,7 @@ use coprocessor_ciphertext_binding::{
     EnclaveCiphertextV1, EnvelopeDecodeError, HandleId, RequestId,
     SystemCiphertextV1 as EnvelopeSystemCiphertextV1,
 };
-use coprocessor_mpc_client::{
+use coprocessor_mpc::{
     request_to_enclave_transformation, MpcToEnclaveSource, ToEnclaveTransformationError,
     ToEnclaveTransformationRequest,
 };

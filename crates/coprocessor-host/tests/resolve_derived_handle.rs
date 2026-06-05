@@ -33,7 +33,7 @@ use coprocessor_handle_graph_core::{
     SystemCiphertextV1,
 };
 use coprocessor_host::{CoprocessorHost, HandleStateFailureCategory, HandleStateView, HostConfig};
-use coprocessor_mpc_client::{
+use coprocessor_mpc::{
     MpcSourceError, MpcToEnclaveResponse, MpcToEnclaveSource, ToEnclaveTransformationRequest,
 };
 use coprocessor_nitro_enclave::{

@@ -1,9 +1,9 @@
-//! Privacy tests for the Display output of transport-json error types (issue #82).
+//! Privacy tests for the Display output of wire-codec error types (issue #82).
 //!
 //! Verifies that newly derived Display impls contain only category labels,
 //! field names, and counts — never raw byte payloads or secret material.
 
-use coprocessor_transport_json::{
+use coprocessor_wire_codec::{
     Base64DecodeError, CiphertextJsonError, HexDecodeError, JsonParseError,
 };
 

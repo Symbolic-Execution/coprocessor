@@ -2,7 +2,7 @@
 /// plus the parse function and per-field deserializers.
 use serde::{de::Error as DeError, Deserialize, Deserializer};
 
-use coprocessor_transport_json::{decode_hex_lower, decode_hex_lower_variable};
+use coprocessor_wire_codec::{decode_hex_lower, decode_hex_lower_variable};
 
 use super::config::{AttestationDigest, ChainId, DomainId, KeyId, MpcPublicConfig, MpcSuite};
 use super::error::MpcConfigParseError;
@@ -69,7 +69,7 @@ pub fn parse_mpc_public_config(text: &str) -> Result<MpcPublicConfig, MpcConfigP
 
 fn reject_json_string_escape_in_top_level_object(
     text: &str,
-) -> Result<(), coprocessor_transport_json::JsonParseError> {
+) -> Result<(), coprocessor_wire_codec::JsonParseError> {
     let Some(start) = first_non_whitespace(text) else {
         return Ok(());
     };
@@ -89,9 +89,7 @@ fn reject_json_string_escape_in_top_level_object(
             }
             match byte {
                 b'\\' if reject_current_string => {
-                    return Err(
-                        coprocessor_transport_json::JsonParseError::UnsupportedStringEscape,
-                    );
+                    return Err(coprocessor_wire_codec::JsonParseError::UnsupportedStringEscape);
                 }
                 b'\\' => escaped = true,
                 b'"' => {

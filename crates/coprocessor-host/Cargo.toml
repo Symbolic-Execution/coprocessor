@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 coprocessor-handle-graph-core = { path = "../handle-graph-core" }
-coprocessor-mpc-client = { path = "../mpc-client" }
+coprocessor-mpc = { path = "../mpc" }
 coprocessor-ciphertext-binding = { path = "../ciphertext-binding" }
 coprocessor-nitro-enclave = { path = "../nitro-enclave" }
 coprocessor-enclave-runtime = { path = "../enclave-runtime" }

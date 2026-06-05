@@ -7,14 +7,14 @@
 //! test; finer-grained parse and compatibility failures are covered under
 //! the dimension they belong to.
 
-mod common;
+mod config_common;
 
-use coprocessor_mpc_config::{
+use coprocessor_mpc::{
     load_mpc_public_config, parse_mpc_public_config, ChainId, DomainId, HexDecodeError,
     JsonParseError, MpcConfigIncompatibility, MpcConfigLoadError, MpcConfigParseError, MpcSuite,
 };
 
-use common::{
+use config_common::{
     build_json, hex32, hex_bytes, matching_expectations, valid_config_json, FlakyOnceSource,
     JsonValue, StubSource, UnavailableSource, TEST_ENCLAVE_MEASUREMENT, TEST_KEY_ID,
 };

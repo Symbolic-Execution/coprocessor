@@ -28,7 +28,7 @@ use coprocessor_enclave_runtime::{
 use coprocessor_handle_graph_core::{
     FailureReason, HandleGraphCore, MaterializeDerivedError, SystemCiphertextV1,
 };
-use coprocessor_mpc_client::{MpcToEnclaveSource, ToEnclaveTransformationError};
+use coprocessor_mpc::{MpcToEnclaveSource, ToEnclaveTransformationError};
 use coprocessor_nitro_enclave::{
     EnclaveAttestationError, EnclaveAttestationMaterial, EnclaveAttestationSource,
 };

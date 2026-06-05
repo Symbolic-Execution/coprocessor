@@ -3,7 +3,7 @@
 /// Serde_json error messages are inspected only to classify the failure
 /// category; raw message text is never forwarded to error values so offending
 /// input fragments (e.g. a public-key string) cannot leak.
-use coprocessor_transport_json::JsonParseError;
+use coprocessor_wire_codec::JsonParseError;
 
 use super::error::MpcConfigParseError;
 
