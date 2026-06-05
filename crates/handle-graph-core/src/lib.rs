@@ -25,11 +25,11 @@ pub use types::{
     PlaintextHandle, PublicPlaintextValue, ResolutionReadiness, SystemCiphertextV1,
 };
 
-mod operations;
 mod ingestion;
-mod query;
-mod orphan;
 mod materialization;
+mod operations;
+mod orphan;
+mod query;
 
 #[derive(Default)]
 pub struct HandleGraphCore {

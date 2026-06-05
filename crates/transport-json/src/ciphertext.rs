@@ -1,8 +1,9 @@
 /// Ciphertext envelope JSON transport: encode/decode System, Enclave,
 /// and Reader ciphertext envelopes as base64-encoded canonical CBOR JSON
 /// strings.
-
-use coprocessor_ciphertext_binding::{EnclaveCiphertextV1, EnvelopeDecodeError, ReaderCiphertextV1, SystemCiphertextV1};
+use coprocessor_ciphertext_binding::{
+    EnclaveCiphertextV1, EnvelopeDecodeError, ReaderCiphertextV1, SystemCiphertextV1,
+};
 
 use super::base64_codec;
 use super::json_codec::JsonParseError;

@@ -1,13 +1,10 @@
 /// Ciphertext envelope types, decode errors, and encode/decode logic for
 /// the three spec-defined envelopes: System, Enclave, and Reader.
-
 use thiserror::Error;
 
 use super::aad::{AadDecodeError, CiphertextBindingAad};
-use super::cbor::{
-    CborReadError, Reader, MAJOR_ARRAY, MAJOR_BYTE_STRING, MAJOR_UINT,
-};
 use super::cbor::{write_array_header, write_byte_string, write_unsigned_integer};
+use super::cbor::{CborReadError, Reader, MAJOR_ARRAY, MAJOR_BYTE_STRING, MAJOR_UINT};
 use super::identifiers::{AadKind, EnvelopeKind};
 
 const ENVELOPE_ARRAY_LENGTH: usize = 4;

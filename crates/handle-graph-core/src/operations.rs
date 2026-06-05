@@ -1,5 +1,4 @@
 /// Arity and type-validation helpers for the HandleGraph OperationCode surface.
-
 use super::types::{HandleType, OperationCode, OperationViolation};
 
 pub(super) fn expected_arity(op: OperationCode) -> usize {

@@ -34,9 +34,9 @@ mod validation;
 
 pub use coprocessor_transport_json::{HexDecodeError, JsonParseError};
 
+pub use compat::MpcConfigIncompatibility;
 pub use config::{AttestationDigest, ChainId, DomainId, KeyId};
 pub use config::{MpcConfigExpectations, MpcPublicConfig, MpcSuite};
-pub use compat::MpcConfigIncompatibility;
 pub use dto::parse_mpc_public_config;
 pub use error::{MpcConfigLoadError, MpcConfigParseError, MpcSourceError};
 pub use source::{load_mpc_public_config, MpcConfigSource};

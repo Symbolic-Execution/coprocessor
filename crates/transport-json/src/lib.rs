@@ -16,11 +16,11 @@ mod base64_codec;
 mod hex_codec;
 mod json_codec;
 
-mod string_escape;
-mod serde_mapping;
-mod hex_identifier;
 mod chain_event_ref;
 mod ciphertext;
+mod hex_identifier;
+mod serde_mapping;
+mod string_escape;
 
 pub use hex_codec::{
     decode_lower as decode_hex_lower, decode_lower_variable as decode_hex_lower_variable,

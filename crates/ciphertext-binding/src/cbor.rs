@@ -99,10 +99,7 @@ impl<'a> Reader<'a> {
         let info = initial & 0x1f;
         let (arg, min_value) = match info {
             0..=23 => (info as u64, 0),
-            24 => (
-                self.read_byte().ok_or(CborReadError::Malformed)? as u64,
-                24,
-            ),
+            24 => (self.read_byte().ok_or(CborReadError::Malformed)? as u64, 24),
             25 => {
                 let b = self.take(2).ok_or(CborReadError::Malformed)?;
                 (u16::from_be_bytes([b[0], b[1]]) as u64, 1 << 8)

@@ -1,5 +1,4 @@
 /// MPC suite, public configuration, and expectation value objects.
-
 pub use coprocessor_ciphertext_binding::{AttestationDigest, DomainId, KeyId};
 pub use coprocessor_handle_graph_core::ChainId;
 

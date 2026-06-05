@@ -1,8 +1,7 @@
 /// MPC config source seam and the load function that drives it.
-
 use super::config::{MpcConfigExpectations, MpcPublicConfig};
 use super::dto::parse_mpc_public_config;
-use super::error::{MpcConfigLoadError, MpcConfigParseError, MpcSourceError};
+use super::error::{MpcConfigLoadError, MpcSourceError};
 
 /// Source seam for the MPC public configuration. Implementations carry
 /// their own endpoint addressing, transport, and authentication; this

@@ -1,6 +1,5 @@
 /// HexIdentifier trait, visitor, macro, and all identifier newtype types
 /// for JSON transport.
-
 use coprocessor_ciphertext_binding::{
     AttestationDigest as BindingAttestationDigest, ContractAddress as BindingContractAddress,
     DomainId as BindingDomainId, HandleId as BindingHandleId, KeyId, ReaderId, RequestId,

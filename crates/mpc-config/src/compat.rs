@@ -1,5 +1,4 @@
 /// MPC configuration compatibility check results.
-
 use thiserror::Error;
 
 use super::config::{ChainId, DomainId, MpcSuite};

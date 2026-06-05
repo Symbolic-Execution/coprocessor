@@ -1,6 +1,5 @@
 /// Host configuration, retry policy, and enclave attestation source
 /// construction.
-
 use coprocessor_nitro_enclave::{
     EnclaveAttestationSource, LocalEnclaveAttestationConfig, LocalEnclaveAttestationSource,
     NitroAdapterConfig, NitroAttestationDocSource, NitroEnclaveAdapter,

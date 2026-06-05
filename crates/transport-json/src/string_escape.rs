@@ -1,6 +1,5 @@
 /// JSON string escape rejection helpers shared by chain-event-ref and
 /// ciphertext envelope decoders.
-
 use super::json_codec::JsonParseError;
 
 pub(super) fn reject_json_string_escape_in_top_level_object(

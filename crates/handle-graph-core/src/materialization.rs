@@ -1,5 +1,4 @@
 /// Materialization and failure transitions for Derived Handle Records.
-
 use super::persistence::HandlePersistence;
 use super::types::{
     FailDerivedError, FailureReason, HandleKey, HandleLineage, HandleRecord, HandleState,

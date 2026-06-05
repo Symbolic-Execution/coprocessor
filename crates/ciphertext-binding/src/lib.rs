@@ -16,14 +16,16 @@
 //! See the repository-level `docs/cbor-spike-decision.md` for the full
 //! rationale.
 
-mod cbor;
-mod identifiers;
 mod aad;
+mod aad_body;
+mod aad_codec;
+mod cbor;
 mod envelope;
+mod identifiers;
 
 pub use identifiers::{
-    AadKind, AttestationDigest, ContractAddress, DomainId, EnvelopeKind, HandleId, KeyId,
-    ReaderId, RequestId,
+    AadKind, AttestationDigest, ContractAddress, DomainId, EnvelopeKind, HandleId, KeyId, ReaderId,
+    RequestId,
 };
 
 pub use aad::{

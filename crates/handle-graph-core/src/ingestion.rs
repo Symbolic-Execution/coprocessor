@@ -1,6 +1,5 @@
 /// Handle Graph ingestion: apply_chain_event and related methods,
 /// including persistence-write-through variants and restore-from-persistence.
-
 use std::collections::{HashMap, HashSet};
 
 use super::operations::{validate_arity, validate_operation_types};

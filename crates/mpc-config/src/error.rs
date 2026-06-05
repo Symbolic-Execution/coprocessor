@@ -1,5 +1,4 @@
 /// MPC configuration parse errors, source errors, and load errors.
-
 use thiserror::Error;
 
 use coprocessor_transport_json::{HexDecodeError, JsonParseError};

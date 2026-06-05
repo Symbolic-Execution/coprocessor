@@ -1,6 +1,5 @@
 /// Wire-shaped serde DTO for the MPC public configuration JSON payload,
 /// plus the parse function and per-field deserializers.
-
 use serde::{de::Error as DeError, Deserialize, Deserializer};
 
 use coprocessor_transport_json::{decode_hex_lower, decode_hex_lower_variable};
@@ -8,8 +7,7 @@ use coprocessor_transport_json::{decode_hex_lower, decode_hex_lower_variable};
 use super::config::{AttestationDigest, ChainId, DomainId, KeyId, MpcPublicConfig, MpcSuite};
 use super::error::MpcConfigParseError;
 use super::serde_mapping::{
-    extract_missing_mpc_field, field_shape_marker, invalid_unsigned_marker,
-    map_serde_json_to_mpc_parse_error,
+    field_shape_marker, invalid_unsigned_marker, map_serde_json_to_mpc_parse_error,
 };
 use super::validation::to_fixed;
 
@@ -91,7 +89,9 @@ fn reject_json_string_escape_in_top_level_object(
             }
             match byte {
                 b'\\' if reject_current_string => {
-                    return Err(coprocessor_transport_json::JsonParseError::UnsupportedStringEscape);
+                    return Err(
+                        coprocessor_transport_json::JsonParseError::UnsupportedStringEscape,
+                    );
                 }
                 b'\\' => escaped = true,
                 b'"' => {

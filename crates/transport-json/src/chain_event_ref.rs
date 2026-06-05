@@ -1,5 +1,4 @@
 /// ChainEventRef JSON encoding and decoding.
-
 use coprocessor_handle_graph_core::{ChainEventRef, ChainId};
 use serde::{de::Error as DeError, Deserialize, Deserializer, Serialize};
 

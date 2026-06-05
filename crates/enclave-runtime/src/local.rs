@@ -26,7 +26,6 @@ use crate::{EnclaveExecutionError, EnclaveExecutionOutcome, EnclaveRuntime, Reso
 
 use super::operation::{
     bool_to_payload, payload_to_bool, type_tag_for_handle_type, SupportedOperation,
-    SBOOL_TYPE_TAG, SUINT256_TYPE_TAG,
 };
 use super::sealing::{seal_payload, unseal_payload};
 use super::validation::{input_aad_error, InputAadField};
@@ -306,4 +305,3 @@ impl EnclaveRuntime for LocalEnclaveRuntime {
         })
     }
 }
-

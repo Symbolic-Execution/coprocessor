@@ -1,10 +1,7 @@
 /// Canonical and audit queries, resolution readiness, and constructors
 /// for HandleGraphCore.
-
 use super::plaintext_materialization::PlaintextMaterializer;
-use super::types::{
-    HandleKey, HandleLineage, HandleRecord, HandleState, ResolutionReadiness,
-};
+use super::types::{HandleKey, HandleLineage, HandleRecord, HandleState, ResolutionReadiness};
 use super::HandleGraphCore;
 
 impl HandleGraphCore {

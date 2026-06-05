@@ -1,6 +1,5 @@
 /// Domain value types, Handle State, Chain Event types, and failure/rejection
 /// enums for the Handle Graph Core.
-
 use thiserror::Error;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

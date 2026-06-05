@@ -1,7 +1,6 @@
 /// Supported enclave operations and their evaluation logic.
 /// Also owns the HandleType → type-tag mapping used by both operation
 /// input validation and the sealing/unsealing paths.
-
 use std::cmp::Ordering;
 
 use coprocessor_handle_graph_core::{HandleType, OperationCode};

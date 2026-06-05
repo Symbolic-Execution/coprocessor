@@ -1,5 +1,4 @@
 /// Lifecycle phases, readiness signal, and host start errors.
-
 use thiserror::Error;
 
 use super::config::HostConfigError;

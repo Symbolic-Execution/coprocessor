@@ -1,5 +1,4 @@
 /// Input AAD validation types for the local Enclave runtime.
-
 use crate::EnclaveExecutionError;
 
 /// The specific AAD field whose verification failed. The variant is safe to
@@ -31,9 +30,6 @@ pub enum InputAadField {
     KeyId,
 }
 
-pub(super) fn input_aad_error(
-    input_index: usize,
-    field: InputAadField,
-) -> EnclaveExecutionError {
+pub(super) fn input_aad_error(input_index: usize, field: InputAadField) -> EnclaveExecutionError {
     EnclaveExecutionError::InputAadVerificationFailed { input_index, field }
 }

@@ -4,7 +4,6 @@
 /// only to classify the failure category; raw message text is never
 /// forwarded to error values so offending input fragments (tokens, field
 /// values) cannot leak.
-
 use super::hex_codec::HexDecodeError;
 use super::json_codec::JsonParseError;
 
