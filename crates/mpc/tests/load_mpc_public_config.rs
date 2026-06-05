@@ -9,7 +9,7 @@
 
 mod config_common;
 
-use coprocessor_mpc::config::{
+use coprocessor_mpc::{
     load_mpc_public_config, parse_mpc_public_config, ChainId, DomainId, HexDecodeError,
     JsonParseError, MpcConfigIncompatibility, MpcConfigLoadError, MpcConfigParseError, MpcSuite,
 };

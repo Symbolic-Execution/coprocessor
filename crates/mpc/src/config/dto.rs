@@ -89,9 +89,7 @@ fn reject_json_string_escape_in_top_level_object(
             }
             match byte {
                 b'\\' if reject_current_string => {
-                    return Err(
-                        coprocessor_wire_codec::JsonParseError::UnsupportedStringEscape,
-                    );
+                    return Err(coprocessor_wire_codec::JsonParseError::UnsupportedStringEscape);
                 }
                 b'\\' => escaped = true,
                 b'"' => {

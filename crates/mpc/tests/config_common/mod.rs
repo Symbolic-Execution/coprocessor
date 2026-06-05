@@ -2,9 +2,9 @@
 
 use std::cell::RefCell;
 
-use coprocessor_mpc::config::{
+use coprocessor_mpc::{
     AttestationDigest, ChainId, DomainId, KeyId, MpcConfigExpectations, MpcConfigSource,
-    MpcSourceError, MpcSuite,
+    MpcConfigSourceError, MpcSuite,
 };
 
 pub const TEST_CHAIN_ID: ChainId = ChainId(1);
@@ -87,7 +87,7 @@ impl StubSource {
 }
 
 impl MpcConfigSource for StubSource {
-    fn fetch(&self) -> Result<String, MpcSourceError> {
+    fn fetch(&self) -> Result<String, MpcConfigSourceError> {
         Ok(self.body.clone())
     }
 }
@@ -98,8 +98,8 @@ pub struct UnavailableSource {
 }
 
 impl MpcConfigSource for UnavailableSource {
-    fn fetch(&self) -> Result<String, MpcSourceError> {
-        Err(MpcSourceError::Unavailable {
+    fn fetch(&self) -> Result<String, MpcConfigSourceError> {
+        Err(MpcConfigSourceError::Unavailable {
             detail: self.detail.to_string(),
         })
     }
@@ -123,11 +123,11 @@ impl FlakyOnceSource {
 }
 
 impl MpcConfigSource for FlakyOnceSource {
-    fn fetch(&self) -> Result<String, MpcSourceError> {
+    fn fetch(&self) -> Result<String, MpcConfigSourceError> {
         let mut failed = self.failed.borrow_mut();
         if !*failed {
             *failed = true;
-            Err(MpcSourceError::Unavailable {
+            Err(MpcConfigSourceError::Unavailable {
                 detail: "transient: connection refused".to_string(),
             })
         } else {

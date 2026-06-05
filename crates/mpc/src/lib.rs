@@ -9,21 +9,23 @@
 //! - [`to_enclave`] owns [`ToEnclaveTransformationRequest`], the
 //!   [`MpcToEnclaveSource`] seam, and the transformation function.
 //!
-//! The full public surface of both modules is re-exported here so callers
+//! The public surface of both modules is re-exported here so callers
 //! use `coprocessor_mpc::{...}` without knowing the internal structure.
 //!
-//! Note: both modules define an `MpcSourceError` type for their respective
-//! seam contracts. `coprocessor_mpc::MpcSourceError` resolves to the
-//! To-Enclave one (the type the host interacts with at runtime). The config
-//! source error is available as `coprocessor_mpc::config::MpcSourceError`.
+//! Note: the previous config and To-Enclave crates both exported an
+//! `MpcSourceError` type for different seam contracts. The root
+//! `MpcSourceError` resolves to the To-Enclave one, which is the runtime path
+//! used by the host. The config source error is re-exported as
+//! [`MpcConfigSourceError`].
 
-pub mod config;
-pub mod to_enclave;
+mod config;
+mod to_enclave;
 
 pub use config::{
     load_mpc_public_config, parse_mpc_public_config, AttestationDigest, ChainId, DomainId,
     HexDecodeError, JsonParseError, KeyId, MpcConfigExpectations, MpcConfigIncompatibility,
-    MpcConfigLoadError, MpcConfigParseError, MpcConfigSource, MpcPublicConfig, MpcSuite,
+    MpcConfigLoadError, MpcConfigParseError, MpcConfigSource, MpcPublicConfig,
+    MpcSourceError as MpcConfigSourceError, MpcSuite,
 };
 
 pub use to_enclave::{

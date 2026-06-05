@@ -6,9 +6,9 @@
 
 use coprocessor_ciphertext_binding::DomainId;
 use coprocessor_handle_graph_core::ChainId;
-use coprocessor_mpc::config::{
+use coprocessor_mpc::{
     parse_mpc_public_config, HexDecodeError, JsonParseError, MpcConfigIncompatibility,
-    MpcConfigLoadError, MpcConfigParseError, MpcSourceError, MpcSuite,
+    MpcConfigLoadError, MpcConfigParseError, MpcConfigSourceError, MpcSuite,
 };
 
 const FORBIDDEN_DISPLAY_FRAGMENTS: &[&str] = &[
@@ -61,13 +61,13 @@ fn domain_id_mismatch_display_contains_no_raw_bytes() {
 }
 
 // ---------------------------------------------------------------------------
-// MpcSourceError::Unavailable may include the detail string (non-secret)
+// MpcConfigSourceError::Unavailable may include the detail string (non-secret)
 // but must not include raw byte patterns from fixture seeds.
 // ---------------------------------------------------------------------------
 
 #[test]
 fn mpc_source_unavailable_display_includes_detail_not_bytes() {
-    let err = MpcSourceError::Unavailable {
+    let err = MpcConfigSourceError::Unavailable {
         detail: "connection refused".to_string(),
     };
     let display = format!("{}", err);
@@ -75,7 +75,7 @@ fn mpc_source_unavailable_display_includes_detail_not_bytes() {
         display.contains("connection refused"),
         "Unavailable display must include the detail string: {display:?}"
     );
-    assert_display_is_non_secret("MpcSourceError::Unavailable", &display);
+    assert_display_is_non_secret("MpcConfigSourceError::Unavailable", &display);
 }
 
 // ---------------------------------------------------------------------------
