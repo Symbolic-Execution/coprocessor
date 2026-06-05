@@ -18,10 +18,7 @@ use coprocessor_handle_graph_core::{
     HandleGraphCore, HandleKey, HandlePersistence, PlaintextMaterializer,
 };
 use coprocessor_mpc_client::{EnclaveCiphertextV1, MpcToEnclaveSource};
-use coprocessor_nitro_enclave::{
-    EnclaveAttestationSource, LocalEnclaveAttestationConfig, LocalEnclaveAttestationSource,
-    NitroAdapterConfig, NitroAttestationDocSource, NitroEnclaveAdapter,
-};
+use coprocessor_nitro_enclave::EnclaveAttestationSource;
 
 mod derived_receipt;
 mod internal_api;
@@ -38,8 +35,6 @@ mod resolution_intent;
 use resolution_intent::ResolutionIntents;
 pub use resolution_intent::{RequestId, ResolutionIntent};
 
-use thiserror::Error;
-
 mod resolution_scheduler;
 
 pub use resolution_scheduler::ResolutionTask;
@@ -53,238 +48,14 @@ pub use to_enclave_transformation::{
 
 mod resolve_enclave;
 
-const ALL_DEPENDENCIES: [DependencyName; 3] = [
-    DependencyName::SymVmEventSurface,
-    DependencyName::Mpc,
-    DependencyName::Enclave,
-];
+mod dependency;
+pub use dependency::DependencyName;
 
-/// Named dependencies that the Coprocessor Host requires before it can serve
-/// resolution work. Each variant marks a seam that future slices will wire.
-/// Until a seam is wired, the host reports it as `Unavailable` in [`Readiness`].
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum DependencyName {
-    /// Chain Event Ingestion from the `symVM` Event Surface.
-    SymVmEventSurface,
-    /// MPC threshold-key custody and ciphertext transformation.
-    Mpc,
-    /// Private computation Enclave runtime.
-    Enclave,
-}
+mod config;
+pub use config::{EnclaveAttestationConfig, HostConfig, HostConfigError, RetryPolicy};
 
-impl DependencyName {
-    /// Every dependency the host runtime currently models. The set is closed:
-    /// adding a dependency means extending [`DependencyName`] and surfacing the
-    /// seam in the readiness contract.
-    pub fn all() -> [DependencyName; 3] {
-        ALL_DEPENDENCIES
-    }
-}
-
-/// Retry policy for resolution failures. Controls how many times the host
-/// attempts a Resolution Task before declaring the Derived Handle Failed.
-/// Uses a deterministic attempt counter — no clock, no randomness.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RetryPolicy {
-    /// Maximum number of attempts (including the first). When a backend
-    /// returns a transient error and `attempts_used >= max_attempts` the
-    /// failure is treated as terminal. Must be at least 1.
-    pub max_attempts: u32,
-}
-
-impl Default for RetryPolicy {
-    fn default() -> Self {
-        Self { max_attempts: 3 }
-    }
-}
-
-/// Config-driven selection of the Enclave attestation source. Local mode serves
-/// pre-baked material for tests and local development; Nitro mode wires the
-/// AWS Nitro Enclave adapter backed by an injectable [`NitroAttestationDocSource`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum EnclaveAttestationConfig {
-    /// Pre-baked, deterministic attestation material. Delegates to
-    /// [`LocalEnclaveAttestationSource`]. Use for local development and
-    /// in-process tests; never use in production.
-    Local(LocalEnclaveAttestationConfig),
-    /// AWS Nitro Enclave production adapter. Delegates to
-    /// [`NitroEnclaveAdapter`] backed by an injectable [`NitroAttestationDocSource`].
-    Nitro(NitroAdapterConfig),
-}
-
-/// Configuration loaded by the Coprocessor Host before startup. The shape is
-/// deliberately minimal in this scaffold: the runtime/stack decision (issue
-/// #18) will extend this with endpoints, persistence, and credentials.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HostConfig {
-    /// Human-readable label for the deployment, used in logs and health output.
-    pub deployment_label: String,
-    /// Confirmation view from which Chain Event Ingestion pulls. Defaults to
-    /// [`ChainView::Safe`]; deployments that require stricter confirmation
-    /// can choose [`ChainView::Finalized`].
-    pub chain_view: ChainView,
-    /// Retry policy applied when MPC or Enclave backend returns a transient
-    /// failure. The handle stays Pending while attempts remain; on budget
-    /// exhaustion the handle transitions to Failed.
-    pub retry_policy: RetryPolicy,
-    /// Enclave attestation source selection. Defaults to `Local` in
-    /// [`Self::for_local_development`]; production deployments use
-    /// [`EnclaveAttestationConfig::Nitro`] and wire a real
-    /// [`NitroAttestationDocSource`] at startup via
-    /// [`Self::build_nitro_attestation_source`].
-    pub enclave_attestation: EnclaveAttestationConfig,
-}
-
-impl HostConfig {
-    /// Configuration suitable for local development and the in-process tests
-    /// that drive this crate. It never reaches MPC, the Enclave, or a chain
-    /// RPC, and never reads credentials from the environment.
-    pub fn for_local_development() -> Self {
-        Self {
-            deployment_label: "local-development".to_string(),
-            chain_view: ChainView::default(),
-            retry_policy: RetryPolicy::default(),
-            enclave_attestation: EnclaveAttestationConfig::Local(LocalEnclaveAttestationConfig {
-                enclave_public_key: vec![0x44; 48],
-                enclave_measurement: coprocessor_nitro_enclave::AttestationDigest([0x42; 32]),
-                attestation: vec![0x55; 96],
-            }),
-        }
-    }
-
-    /// Configuration for production AWS Nitro Enclave mode.
-    ///
-    /// `enclave_measurement` is the approved PCR0 MPC checks attestations
-    /// against. `expected_public_key_len` is the byte-count expectation driven
-    /// by the chosen MPC suite (e.g. 48 for `bls12-381-g1`).
-    ///
-    /// Wire the `NitroAttestationDocSource` at startup via
-    /// [`Self::build_nitro_attestation_source`].
-    pub fn for_production_nitro(
-        enclave_measurement: coprocessor_nitro_enclave::AttestationDigest,
-        expected_public_key_len: usize,
-    ) -> Self {
-        Self {
-            deployment_label: "production-nitro".to_string(),
-            chain_view: ChainView::default(),
-            retry_policy: RetryPolicy::default(),
-            enclave_attestation: EnclaveAttestationConfig::Nitro(NitroAdapterConfig {
-                approved_enclave_measurement: enclave_measurement,
-                expected_public_key_len,
-            }),
-        }
-    }
-
-    /// Build a [`LocalEnclaveAttestationSource`] from the config's local
-    /// attestation material. Returns
-    /// [`HostStartError::EnclaveAttestationModeMismatch`] if the config uses
-    /// Nitro mode.
-    pub fn build_local_attestation_source(
-        &self,
-    ) -> Result<Box<dyn EnclaveAttestationSource>, HostStartError> {
-        match &self.enclave_attestation {
-            EnclaveAttestationConfig::Local(cfg) => {
-                Ok(Box::new(LocalEnclaveAttestationSource::new(cfg.clone())))
-            }
-            EnclaveAttestationConfig::Nitro(_) => {
-                Err(HostStartError::EnclaveAttestationModeMismatch)
-            }
-        }
-    }
-
-    /// Build a [`NitroEnclaveAdapter`] backed by `doc_source`. The
-    /// `doc_source` is the injectable [`NitroAttestationDocSource`]: use a
-    /// fake in tests and a real NSM transport in production.
-    ///
-    /// Returns [`HostStartError::EnclaveAttestationModeMismatch`] if the
-    /// config uses Local mode. Returns
-    /// [`HostStartError::InvalidEnclaveAttestationConfig`] if the Nitro
-    /// config fails [`NitroAdapterConfig::validate`].
-    pub fn build_nitro_attestation_source<S: NitroAttestationDocSource + 'static>(
-        &self,
-        doc_source: S,
-    ) -> Result<Box<dyn EnclaveAttestationSource>, HostStartError> {
-        match &self.enclave_attestation {
-            EnclaveAttestationConfig::Nitro(cfg) => {
-                NitroEnclaveAdapter::new(cfg.clone(), doc_source)
-                    .map(|adapter| Box::new(adapter) as Box<dyn EnclaveAttestationSource>)
-                    .map_err(HostStartError::InvalidEnclaveAttestationConfig)
-            }
-            EnclaveAttestationConfig::Local(_) => {
-                Err(HostStartError::EnclaveAttestationModeMismatch)
-            }
-        }
-    }
-
-    fn validate(&self) -> Result<(), HostConfigError> {
-        if self.deployment_label.trim().is_empty() {
-            return Err(HostConfigError::EmptyDeploymentLabel);
-        }
-        if self.retry_policy.max_attempts == 0 {
-            return Err(HostConfigError::RetryPolicyRequiresAttempt);
-        }
-        if let EnclaveAttestationConfig::Nitro(cfg) = &self.enclave_attestation {
-            cfg.validate().map_err(|e| {
-                let detail = match e {
-                    coprocessor_nitro_enclave::EnclaveAttestationError::InvalidConfiguration {
-                        detail,
-                    } => detail,
-                    other => format!("unexpected validation error: {other:?}"),
-                };
-                HostConfigError::InvalidEnclaveAttestationConfig { detail }
-            })?;
-        }
-        Ok(())
-    }
-}
-
-impl Default for HostConfig {
-    fn default() -> Self {
-        Self::for_local_development()
-    }
-}
-
-/// Reasons configuration validation can fail before the host starts. Failure
-/// keeps the host in [`LifecycleState::NotStarted`].
-#[derive(Clone, Debug, Eq, PartialEq, Error)]
-pub enum HostConfigError {
-    #[error("deployment label must not be empty")]
-    EmptyDeploymentLabel,
-    #[error("retry policy requires at least one attempt")]
-    RetryPolicyRequiresAttempt,
-    /// Nitro adapter configuration failed its own validation rules.
-    /// `detail` is the non-secret description of the failing rule.
-    #[error("invalid Enclave attestation config: {detail}")]
-    InvalidEnclaveAttestationConfig { detail: String },
-}
-
-/// Lifecycle phase of the Coprocessor Host. Transitions are linear:
-/// `NotStarted` -> `Running` -> `ShutDown`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum LifecycleState {
-    NotStarted,
-    Running,
-    ShutDown,
-}
-
-/// Readiness signal exposed by the host. Distinguishes a host that has merely
-/// loaded configuration from one that has every named dependency wired and
-/// reachable. The Coordinator should treat anything other than
-/// [`Readiness::Ready`] as not-yet-serving.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Readiness {
-    /// The host has not been started, so no configuration has been loaded and
-    /// no dependencies have been polled.
-    NotStarted,
-    /// Configuration is loaded and valid, but at least one named dependency is
-    /// still `Unavailable`. The `unavailable` list is sorted and deduplicated.
-    ConfigurationLoaded { unavailable: Vec<DependencyName> },
-    /// Configuration is loaded and every named dependency reports available.
-    Ready,
-    /// The host completed a clean shutdown. Readiness reads after shutdown
-    /// must not be confused with `NotStarted`.
-    ShutDown,
-}
+mod lifecycle;
+pub use lifecycle::{HostStartError, LifecycleState, Readiness};
 
 /// Coprocessor Host runtime. Owns the in-memory [`HandleGraphCore`] and the
 /// availability state of every named dependency. This scaffold does not spawn
@@ -556,24 +327,6 @@ impl CoprocessorHost {
 
     /// Execute one claimed Resolution Task through the Enclave boundary and
     /// materialize the result into the Handle Graph.
-    ///
-    /// Takes the scheduler `task`, transforms its ordered inputs through MPC,
-    /// builds the enclave-runtime [`ResolutionTask`], calls `enclave.execute`,
-    /// bridges the [`EnclaveExecutionOutcome`] into core domain types, and
-    /// transitions the Pending Derived Handle to Ready. On success the
-    /// scheduler claim is released and the view reflects `Ready`.
-    ///
-    /// On a terminal MPC, Enclave, or Materialization failure the Pending
-    /// Derived Handle transitions to `Failed` and the claim is released. On a
-    /// transient backend failure while the retry budget allows it the Handle
-    /// stays Pending, the budget decrements, and the claim is released so the
-    /// scheduler may re-claim on a later tick. When the retry budget is
-    /// exhausted a transient failure becomes terminal and the Handle transitions
-    /// to `Failed`.
-    ///
-    /// The returned [`HandleStateView`] always reflects the Handle's state
-    /// after the call: `Ready` on success, `Failed` on terminal failure, and
-    /// `Pending` on retryable failure while budget remains.
     pub fn resolve_claimed_task(
         &mut self,
         task: &ResolutionTask,
@@ -601,23 +354,4 @@ impl CoprocessorHost {
             .filter(|dep| !self.available_dependencies.contains(dep))
             .collect()
     }
-}
-
-/// Reasons [`CoprocessorHost::start`] can fail.
-#[derive(Clone, Debug, Eq, PartialEq, Error)]
-pub enum HostStartError {
-    #[error(transparent)]
-    InvalidConfig(#[from] HostConfigError),
-    #[error("host is already shut down")]
-    AlreadyShutDown,
-    /// The Nitro adapter configuration is internally inconsistent. Surfaces
-    /// [`coprocessor_nitro_enclave::EnclaveAttestationError::InvalidConfiguration`]
-    /// from the factory ([`HostConfig::build_nitro_attestation_source`]).
-    #[error(transparent)]
-    InvalidEnclaveAttestationConfig(#[from] coprocessor_nitro_enclave::EnclaveAttestationError),
-    /// The wrong factory was called for the selected attestation mode (e.g.
-    /// `build_nitro_attestation_source` on a Local config, or
-    /// `build_local_attestation_source` on a Nitro config).
-    #[error("enclave attestation mode mismatch")]
-    EnclaveAttestationModeMismatch,
 }

@@ -24,9 +24,13 @@ pub use coprocessor_ciphertext_binding::{
 };
 pub use coprocessor_handle_graph_core::{HandleKey, HandleType, OperationCode};
 
+mod validation;
+mod sealing;
+mod operation;
 mod local;
 
-pub use local::{InputAadField, LocalEnclaveConfig, LocalEnclaveRuntime};
+pub use validation::InputAadField;
+pub use local::{LocalEnclaveConfig, LocalEnclaveRuntime};
 
 use thiserror::Error;
 
