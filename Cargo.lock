@@ -523,6 +523,7 @@ version = "0.1.0"
 dependencies = [
  "coprocessor-ciphertext-binding",
  "coprocessor-handle-graph-core",
+ "thiserror",
 ]
 
 [[package]]
@@ -532,6 +533,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "coprocessor-ciphertext-binding",
+ "thiserror",
 ]
 
 [[package]]
@@ -543,6 +545,7 @@ dependencies = [
  "coprocessor-handle-graph-core",
  "coprocessor-mpc-client",
  "coprocessor-nitro-enclave",
+ "thiserror",
 ]
 
 [[package]]
@@ -551,6 +554,7 @@ version = "0.1.0"
 dependencies = [
  "coprocessor-ciphertext-binding",
  "coprocessor-handle-graph-core",
+ "thiserror",
 ]
 
 [[package]]
@@ -570,6 +574,7 @@ name = "coprocessor-nitro-enclave"
 version = "0.1.0"
 dependencies = [
  "coprocessor-ciphertext-binding",
+ "thiserror",
 ]
 
 [[package]]

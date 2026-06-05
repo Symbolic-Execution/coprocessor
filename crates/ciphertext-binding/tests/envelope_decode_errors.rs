@@ -304,4 +304,10 @@ fn envelope_error_strings_do_not_contain_payload_bytes() {
         !rendered.contains(needle),
         "envelope error must not include payload bytes, got: {rendered}",
     );
+
+    let display_rendered = format!("{err}");
+    assert!(
+        !display_rendered.contains(needle),
+        "envelope error display must not include payload bytes, got: {display_rendered}",
+    );
 }

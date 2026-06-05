@@ -11,3 +11,4 @@ path = "src/lib.rs"
 coprocessor-ciphertext-binding = { path = "../ciphertext-binding" }
 alloy-sol-types = { workspace = true }
 alloy-primitives = { workspace = true }
+thiserror = { workspace = true }

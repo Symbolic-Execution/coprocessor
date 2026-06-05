@@ -44,6 +44,8 @@ pub use nitro::{
     NitroSourceError,
 };
 
+use thiserror::Error;
+
 /// Runtime-neutral material the Coprocessor Host forwards to MPC when
 /// requesting a To-Enclave Transformation.
 ///
@@ -65,20 +67,23 @@ pub struct EnclaveAttestationMaterial {
 /// No variant embeds attestation document bytes, the Enclave public key, or
 /// any other secret-adjacent payload; only counts and short diagnostic
 /// descriptions appear.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum EnclaveAttestationError {
     /// The attestation backend was unreachable or returned a transient
     /// error. Hosts may retry while their retry policy allows it.
+    #[error("attestation backend unavailable: {detail}")]
     BackendUnavailable { detail: String },
     /// The attestation backend replied, but the document could not be
     /// validated as a well-formed attestation. `detail` is non-secret
     /// diagnostic context (for example, the expected and observed public-key
     /// byte counts).
+    #[error("malformed attestation: {detail}")]
     MalformedAttestation { detail: String },
     /// The Enclave Measurement carried by the attestation does not match the
     /// approved Enclave Measurement the adapter is configured to accept.
     /// Reported with the expected and actual digests so the host can
     /// correlate logs without inspecting attestation document bytes.
+    #[error("attestation measurement mismatch: expected {expected:?}, actual {actual:?}")]
     MeasurementMismatch {
         expected: AttestationDigest,
         actual: AttestationDigest,
@@ -87,6 +92,7 @@ pub enum EnclaveAttestationError {
     /// validation rules (zero-length public-key expectation, all-zero
     /// approved Enclave Measurement, etc.). The detail describes which rule
     /// failed without exposing the bad value.
+    #[error("invalid attestation adapter configuration: {detail}")]
     InvalidConfiguration { detail: String },
 }
 

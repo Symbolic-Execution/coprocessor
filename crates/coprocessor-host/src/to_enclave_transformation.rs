@@ -44,26 +44,32 @@ use coprocessor_mpc_client::{
 use coprocessor_nitro_enclave::{EnclaveAttestationError, EnclaveAttestationSource};
 
 use crate::resolution_scheduler::ResolutionTask;
+use thiserror::Error;
 
 /// Reasons [`transform_resolution_task_inputs`] can fail. Each variant
 /// identifies the offending input position so the host can map the failure to
 /// the corresponding input Handle Key without re-walking the task.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum TransformResolutionInputsError {
     /// The task's input Handle Keys and input ciphertexts are not
     /// index-aligned. Scheduler-built tasks should never hit this; the check
     /// protects the public host method from externally constructed malformed
     /// tasks.
+    #[error(
+        "task input length mismatch: {handle_key_count} handle keys, {system_ciphertext_count} input ciphertexts"
+    )]
     TaskInputLengthMismatch {
         handle_key_count: usize,
         system_ciphertext_count: usize,
     },
     /// The Enclave attestation seam could not provide the task-scoped
     /// material MPC must validate before transforming any input.
+    #[error("enclave attestation unavailable: {error}")]
     EnclaveAttestationUnavailable { error: EnclaveAttestationError },
     /// The input `SystemCiphertextV1` bytes at `input_index` could not be
     /// decoded as a canonical envelope. The host treats this as an upstream
     /// ingestion problem rather than an MPC failure.
+    #[error("malformed system ciphertext at input {input_index}: {error}")]
     MalformedSystemCiphertext {
         input_index: usize,
         error: EnvelopeDecodeError,
@@ -73,6 +79,7 @@ pub enum TransformResolutionInputsError {
     /// spec-mandated five-variant distinction (transient transport,
     /// malformed response, unauthorized, invalid binding, invalid
     /// attestation) so the host can apply distinct retry policies.
+    #[error("MPC transformation failed at input {input_index}: {error}")]
     MpcTransformationFailed {
         input_index: usize,
         error: ToEnclaveTransformationError,

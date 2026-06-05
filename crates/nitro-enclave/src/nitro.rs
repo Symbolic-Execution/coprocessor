@@ -27,6 +27,7 @@
 //! exported from the crate root.
 
 use coprocessor_ciphertext_binding::AttestationDigest;
+use thiserror::Error;
 
 use crate::{EnclaveAttestationError, EnclaveAttestationMaterial, EnclaveAttestationSource};
 
@@ -91,12 +92,14 @@ pub struct NitroAttestationDoc {
 /// usable document. Separate from [`EnclaveAttestationError`] so the
 /// transport implementation does not need to know how the adapter maps each
 /// case onto the runtime-neutral error surface.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum NitroSourceError {
     /// The NSM endpoint was unreachable or returned a transient error.
+    #[error("NSM endpoint unavailable: {detail}")]
     Unavailable { detail: String },
     /// The NSM endpoint replied but the document could not be parsed as a
     /// usable [`NitroAttestationDoc`].
+    #[error("malformed NSM attestation document: {detail}")]
     Malformed { detail: String },
 }
 

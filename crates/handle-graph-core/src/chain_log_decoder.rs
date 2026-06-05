@@ -33,6 +33,7 @@ use crate::{
     HandleId, HandleKey, HandleType, ImportedHandle, OperationCode, PlaintextHandle,
     PublicPlaintextValue, SystemCiphertextV1,
 };
+use thiserror::Error;
 
 sol! {
     event HandleImportedV1(
@@ -87,14 +88,17 @@ pub struct ChainLog {
 /// Why a [`ChainLog`] could not be turned into a [`ChainEvent`]. Malformed or
 /// unknown logs are surfaced as errors so callers can drop them without
 /// polluting the Handle Graph.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum ChainLogDecodeError {
     /// Log carried no topics, so the event signature is missing.
+    #[error("empty topics")]
     EmptyTopics,
     /// `topics[0]` did not match a known symVM event signature.
+    #[error("unknown event signature: {0:?}")]
     UnknownEventSignature([u8; 32]),
     /// The number of topics did not match the layout of the matched event
     /// (all V1 events require exactly 4 topics).
+    #[error("unexpected topic count for {signature:?}: expected {expected}, actual {actual}")]
     UnexpectedTopicCount {
         signature: [u8; 32],
         expected: usize,
@@ -102,10 +106,13 @@ pub enum ChainLogDecodeError {
     },
     /// ABI decoding of the log data failed. Payload bytes are not included
     /// to avoid leaking ciphertext or plaintext content in error surfaces.
+    #[error("malformed ABI event data")]
     MalformedAbiData,
     /// The encoded `OperationCode` byte did not match a known discriminant.
+    #[error("unknown operation code: {0}")]
     UnknownOperationCode(u8),
     /// The encoded `HandleType` byte did not match a known discriminant.
+    #[error("unknown handle type: {0}")]
     UnknownHandleType(u8),
 }
 

@@ -28,6 +28,8 @@ mod local;
 
 pub use local::{InputAadField, LocalEnclaveConfig, LocalEnclaveRuntime};
 
+use thiserror::Error;
+
 /// One host-scheduled Resolution Task: everything an [`EnclaveRuntime`] needs
 /// to perform Enclave Execution for a single Derived Handle.
 ///
@@ -99,23 +101,28 @@ pub struct EnclaveExecutionOutcome {
 /// Handle Keys, counts, OperationCodes, and attestation digests, but never
 /// plaintext, wrapped keys, or ciphertext bytes. The host maps these to the
 /// `EnclaveExecutionFailure` Failed category when it cannot recover.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum EnclaveExecutionError {
     /// MPC bound a different Enclave key than the runtime was configured to
     /// accept. Reported with the expected and actual attestation digests so
     /// the host can correlate logs without inspecting key material.
+    #[error("attestation verification failed: expected {expected:?}, actual {actual:?}")]
     AttestationVerificationFailure {
         expected: AttestationDigest,
         actual: AttestationDigest,
     },
     /// The task's ordered Handle Keys and input ciphertexts disagree on
     /// length. The runtime cannot guess the pairing.
+    #[error(
+        "input count mismatch: {handle_key_count} handle keys, {ciphertext_count} ciphertexts"
+    )]
     InputCountMismatch {
         handle_key_count: usize,
         ciphertext_count: usize,
     },
     /// The runtime does not implement this OperationCode. The host treats
     /// this as a permanent failure for the affected Derived Handle.
+    #[error("operation not supported: {0:?}")]
     OperationNotSupported(OperationCode),
     /// One input ciphertext's [`EnclaveAadV1`] did not match the binding the
     /// runtime expected for this Resolution Task. The error names the failing
@@ -124,6 +131,7 @@ pub enum EnclaveExecutionError {
     /// failure for the affected Derived Handle.
     ///
     /// [`EnclaveAadV1`]: coprocessor_ciphertext_binding::EnclaveAadV1
+    #[error("input AAD verification failed at input {input_index} for field {field:?}")]
     InputAadVerificationFailed {
         input_index: usize,
         field: InputAadField,
@@ -131,6 +139,7 @@ pub enum EnclaveExecutionError {
     /// A transient backend condition (queue full, attestation refresh in
     /// progress, etc.). Hosts may retry while their retry policy still allows
     /// it; the Handle remains Pending in that window.
+    #[error("enclave backend unavailable")]
     BackendUnavailable,
 }
 

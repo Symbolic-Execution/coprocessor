@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use thiserror::Error;
 
 pub mod persistence;
 
@@ -215,16 +216,20 @@ pub struct OrphanDiscardOutcome {
 /// Typed rejection reasons for [`HandleGraphCore::materialize_derived_handle`].
 /// Every variant is safe to surface to the Coprocessor Host: none embed
 /// ciphertext bytes, wrapped keys, or plaintext.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum MaterializeDerivedError {
     /// No Handle Record exists for the given Handle Key.
+    #[error("unknown handle")]
     UnknownHandle,
     /// The Handle Record exists but has been tombstoned by Orphan Discard.
+    #[error("tombstoned handle")]
     Tombstoned,
     /// The Handle Record's lineage is Source, not Derived. Only Derived
     /// Handles can be materialized through Enclave Execution.
+    #[error("handle is not derived")]
     NotDerived,
     /// The Handle Record is not in the Pending state (already Ready or Failed).
+    #[error("handle is not pending")]
     NotPending,
 }
 
@@ -233,15 +238,19 @@ pub enum MaterializeDerivedError {
 /// non-tombstoned handle may transition to Failed. Every variant is safe to
 /// surface to the Coprocessor Host: none embed ciphertext, wrapped keys, or
 /// plaintext.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum FailDerivedError {
     /// No Handle Record exists for the given Handle Key.
+    #[error("unknown handle")]
     UnknownHandle,
     /// The Handle Record exists but has been tombstoned by Orphan Discard.
+    #[error("tombstoned handle")]
     Tombstoned,
     /// The Handle Record's lineage is Source, not Derived.
+    #[error("handle is not derived")]
     NotDerived,
     /// The Handle Record is not in the Pending state (already Ready or Failed).
+    #[error("handle is not pending")]
     NotPending,
 }
 

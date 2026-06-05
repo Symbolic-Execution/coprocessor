@@ -38,6 +38,8 @@ mod resolution_intent;
 use resolution_intent::ResolutionIntents;
 pub use resolution_intent::{RequestId, ResolutionIntent};
 
+use thiserror::Error;
+
 mod resolution_scheduler;
 
 pub use resolution_scheduler::ResolutionTask;
@@ -244,15 +246,16 @@ impl Default for HostConfig {
 
 /// Reasons configuration validation can fail before the host starts. Failure
 /// keeps the host in [`LifecycleState::NotStarted`].
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum HostConfigError {
+    #[error("deployment label must not be empty")]
     EmptyDeploymentLabel,
+    #[error("retry policy requires at least one attempt")]
     RetryPolicyRequiresAttempt,
     /// Nitro adapter configuration failed its own validation rules.
     /// `detail` is the non-secret description of the failing rule.
-    InvalidEnclaveAttestationConfig {
-        detail: String,
-    },
+    #[error("invalid Enclave attestation config: {detail}")]
+    InvalidEnclaveAttestationConfig { detail: String },
 }
 
 /// Lifecycle phase of the Coprocessor Host. Transitions are linear:
@@ -601,16 +604,20 @@ impl CoprocessorHost {
 }
 
 /// Reasons [`CoprocessorHost::start`] can fail.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum HostStartError {
-    InvalidConfig(HostConfigError),
+    #[error(transparent)]
+    InvalidConfig(#[from] HostConfigError),
+    #[error("host is already shut down")]
     AlreadyShutDown,
     /// The Nitro adapter configuration is internally inconsistent. Surfaces
     /// [`coprocessor_nitro_enclave::EnclaveAttestationError::InvalidConfiguration`]
     /// from the factory ([`HostConfig::build_nitro_attestation_source`]).
-    InvalidEnclaveAttestationConfig(coprocessor_nitro_enclave::EnclaveAttestationError),
+    #[error(transparent)]
+    InvalidEnclaveAttestationConfig(#[from] coprocessor_nitro_enclave::EnclaveAttestationError),
     /// The wrong factory was called for the selected attestation mode (e.g.
     /// `build_nitro_attestation_source` on a Local config, or
     /// `build_local_attestation_source` on a Nitro config).
+    #[error("enclave attestation mode mismatch")]
     EnclaveAttestationModeMismatch,
 }
