@@ -16,19 +16,24 @@ pub enum MpcConfigParseError {
     #[error(transparent)]
     Json(#[from] JsonParseError),
     /// A hex-encoded field could not be decoded into bytes.
-    /// `#[from]` is on this variant; `InvalidPublicKey` shares the same source
-    /// type and is constructed explicitly.
+    /// `#[from]` is on this variant; `InvalidHpkePublicKey` shares the same
+    /// source type and is constructed explicitly.
     #[error(transparent)]
     Hex(#[from] HexDecodeError),
-    /// The `suite` field carried a value that does not name a known
-    /// [`super::config::MpcSuite`].
-    #[error("unknown MPC suite name")]
-    UnknownSuite,
-    /// The `public_key` field was not canonical lower `0x`-prefixed hex.
+    /// The `reader_key_algorithm` field carried a value that does not name a
+    /// known [`super::config::ReaderKeyAlgorithm`].
+    #[error("unknown reader key algorithm")]
+    UnknownReaderKeyAlgorithm,
+    /// The `ciphertext_suite` field carried a value that does not name a
+    /// known [`super::config::CiphertextSuite`].
+    #[error("unknown ciphertext suite")]
+    UnknownCiphertextSuite,
+    /// The `hpke_public_key` field was not canonical lower `0x`-prefixed
+    /// fixed-width hex.
     /// Constructed explicitly (not via `From`) because `HexDecodeError` is
     /// already the `#[from]` source of the `Hex` variant above.
-    #[error("invalid public key hex")]
-    InvalidPublicKey(#[source] HexDecodeError),
+    #[error("invalid hpke public key hex")]
+    InvalidHpkePublicKey(#[source] HexDecodeError),
 }
 
 /// Reason an [`super::source::MpcConfigSource`] could not produce a payload.

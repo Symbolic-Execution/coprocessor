@@ -3,33 +3,43 @@
 use std::cell::RefCell;
 
 use coprocessor_mpc::{
-    AttestationDigest, ChainId, DomainId, KeyId, MpcConfigExpectations, MpcConfigSource,
-    MpcConfigSourceError, MpcSuite,
+    AttestationDigest, ChainId, CiphertextSuite, DomainId, KeyId, MpcConfigExpectations,
+    MpcConfigSource, MpcConfigSourceError, ReaderKeyAlgorithm,
 };
 
 pub const TEST_CHAIN_ID: ChainId = ChainId(1);
 pub const TEST_DOMAIN_ID: DomainId = DomainId([0x11; 32]);
 pub const TEST_KEY_ID: KeyId = KeyId([0x22; 32]);
 pub const TEST_ENCLAVE_MEASUREMENT: AttestationDigest = AttestationDigest([0x33; 32]);
-pub const TEST_SUITE: MpcSuite = MpcSuite::Bls12_381G1;
+pub const TEST_READER_KEY_ALGORITHM: ReaderKeyAlgorithm = ReaderKeyAlgorithm::X25519;
+pub const TEST_CIPHERTEXT_SUITE: CiphertextSuite =
+    CiphertextSuite::HpkeX25519HkdfSha256Aes256Gcm;
 
 pub fn matching_expectations() -> MpcConfigExpectations {
     MpcConfigExpectations {
         chain_id: TEST_CHAIN_ID,
         domain_id: TEST_DOMAIN_ID,
-        suite: TEST_SUITE,
+        reader_key_algorithm: TEST_READER_KEY_ALGORITHM,
+        ciphertext_suite: TEST_CIPHERTEXT_SUITE,
     }
 }
 
 /// Wire-shaped JSON payload that matches [`matching_expectations`]. The
-/// public key is a 48-byte sequence so it satisfies BLS12-381 G1's shape.
+/// HPKE public key is a 32-byte X25519 public key.
 pub fn valid_config_json() -> String {
     build_json(&[
         ("chain_id", JsonValue::Uint(1)),
         ("domain_id", JsonValue::Str(&hex32(0x11))),
-        ("active_key_id", JsonValue::Str(&hex32(0x22))),
-        ("suite", JsonValue::Str("bls12-381-g1")),
-        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("key_id", JsonValue::Str(&hex32(0x22))),
+        ("hpke_public_key", JsonValue::Str(&hex_bytes(0x44, 32))),
+        (
+            "reader_key_algorithm",
+            JsonValue::Str(TEST_READER_KEY_ALGORITHM.wire_name()),
+        ),
+        (
+            "ciphertext_suite",
+            JsonValue::Str(TEST_CIPHERTEXT_SUITE.wire_name()),
+        ),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ])
 }

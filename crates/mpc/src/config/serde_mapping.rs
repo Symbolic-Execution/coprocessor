@@ -114,9 +114,10 @@ pub(super) fn known_mpc_fields() -> &'static [&'static str] {
     &[
         "chain_id",
         "domain_id",
-        "active_key_id",
-        "suite",
-        "public_key",
+        "key_id",
+        "hpke_public_key",
+        "reader_key_algorithm",
+        "ciphertext_suite",
         "approved_enclave_measurement",
     ]
 }

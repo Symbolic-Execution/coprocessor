@@ -25,7 +25,7 @@ pub use config::{
     load_mpc_public_config, parse_mpc_public_config, AttestationDigest, ChainId, DomainId,
     HexDecodeError, JsonParseError, KeyId, MpcConfigExpectations, MpcConfigIncompatibility,
     MpcConfigLoadError, MpcConfigParseError, MpcConfigSource, MpcPublicConfig,
-    MpcSourceError as MpcConfigSourceError, MpcSuite,
+    MpcSourceError as MpcConfigSourceError, CiphertextSuite, ReaderKeyAlgorithm, X25519PublicKey,
 };
 
 pub use to_enclave::{

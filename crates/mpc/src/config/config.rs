@@ -1,40 +1,59 @@
-/// MPC suite, public configuration, and expectation value objects.
+/// MPC public configuration and expectation value objects.
 pub use coprocessor_ciphertext_binding::{AttestationDigest, DomainId, KeyId};
 pub use coprocessor_handle_graph_core::ChainId;
 
 use super::compat::MpcConfigIncompatibility;
 
-/// A spec-named cryptographic suite carried in the MPC public configuration.
-///
-/// The suite identifies both the threshold scheme MPC runs and the wire
-/// shape of [`MpcPublicConfig::public_key`]. Adding a new suite means
-/// picking a discriminant, its wire name, and its public-key byte length.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum MpcSuite {
-    /// BLS12-381 G1 compressed public keys, 48 bytes.
-    Bls12_381G1,
+pub struct X25519PublicKey(pub [u8; 32]);
+
+/// Reader key algorithm advertised by the MPC public configuration.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ReaderKeyAlgorithm {
+    X25519,
 }
 
-impl MpcSuite {
-    /// Expected byte length of a public key under this suite.
-    pub fn public_key_len(self) -> usize {
+impl ReaderKeyAlgorithm {
+    /// Lowercase wire name carried in the JSON `reader_key_algorithm` field.
+    pub fn wire_name(self) -> &'static str {
         match self {
-            MpcSuite::Bls12_381G1 => 48,
+            ReaderKeyAlgorithm::X25519 => "X25519",
         }
     }
 
-    /// Lowercase wire name carried in the JSON `suite` field.
+    /// Parse a wire name back into a known algorithm. Unknown names surface
+    /// as [`super::error::MpcConfigParseError::UnknownReaderKeyAlgorithm`]
+    /// one level up.
+    pub fn from_wire_name(name: &str) -> Option<Self> {
+        match name {
+            "X25519" => Some(ReaderKeyAlgorithm::X25519),
+            _ => None,
+        }
+    }
+}
+
+/// Ciphertext suite advertised by the MPC public configuration.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum CiphertextSuite {
+    HpkeX25519HkdfSha256Aes256Gcm,
+}
+
+impl CiphertextSuite {
+    /// Wire name carried in the JSON `ciphertext_suite` field.
     pub fn wire_name(self) -> &'static str {
         match self {
-            MpcSuite::Bls12_381G1 => "bls12-381-g1",
+            CiphertextSuite::HpkeX25519HkdfSha256Aes256Gcm => {
+                "HpkeX25519HkdfSha256Aes256Gcm"
+            }
         }
     }
 
     /// Parse a wire name back into a known suite. Unknown names surface as
-    /// [`super::error::MpcConfigParseError::UnknownSuite`] one level up.
+    /// [`super::error::MpcConfigParseError::UnknownCiphertextSuite`] one
+    /// level up.
     pub fn from_wire_name(name: &str) -> Option<Self> {
         match name {
-            "bls12-381-g1" => Some(MpcSuite::Bls12_381G1),
+            "HpkeX25519HkdfSha256Aes256Gcm" => Some(CiphertextSuite::HpkeX25519HkdfSha256Aes256Gcm),
             _ => None,
         }
     }
@@ -44,17 +63,17 @@ impl MpcSuite {
 ///
 /// Each field corresponds to one spec-defined identity the Coprocessor must
 /// preserve when calling MPC or checking Enclave Measurement. The
-/// `public_key` is parsed as lower-hex bytes; callers that need a trusted
-/// configuration should construct it through
-/// [`super::source::load_mpc_public_config`], which checks the public-key
-/// length against [`MpcSuite::public_key_len`].
+/// `hpke_public_key` is parsed as fixed-width lower-hex bytes. Callers that
+/// need a trusted configuration should construct it through
+/// [`super::source::load_mpc_public_config`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MpcPublicConfig {
     pub chain_id: ChainId,
     pub domain_id: DomainId,
-    pub active_key_id: KeyId,
-    pub suite: MpcSuite,
-    pub public_key: Vec<u8>,
+    pub key_id: KeyId,
+    pub hpke_public_key: X25519PublicKey,
+    pub reader_key_algorithm: ReaderKeyAlgorithm,
+    pub ciphertext_suite: CiphertextSuite,
     pub approved_enclave_measurement: AttestationDigest,
 }
 
@@ -62,8 +81,8 @@ impl MpcPublicConfig {
     /// Check the loaded MPC configuration against what the Coprocessor
     /// expects. Returns the first mismatch as an
     /// [`MpcConfigIncompatibility`] in the order the host checks them
-    /// (chain, domain, suite, public-key shape) so the failing dimension is
-    /// stable across runs.
+    /// (chain, domain, reader-key algorithm, ciphertext suite) so the
+    /// failing dimension is stable across runs.
     pub fn check_compatibility(
         &self,
         expectations: &MpcConfigExpectations,
@@ -80,18 +99,16 @@ impl MpcPublicConfig {
                 actual: self.domain_id,
             });
         }
-        if self.suite != expectations.suite {
-            return Err(MpcConfigIncompatibility::SuiteMismatch {
-                expected: expectations.suite,
-                actual: self.suite,
+        if self.reader_key_algorithm != expectations.reader_key_algorithm {
+            return Err(MpcConfigIncompatibility::ReaderKeyAlgorithmMismatch {
+                expected: expectations.reader_key_algorithm,
+                actual: self.reader_key_algorithm,
             });
         }
-        let expected_bytes = self.suite.public_key_len();
-        if self.public_key.len() != expected_bytes {
-            return Err(MpcConfigIncompatibility::PublicKeyShape {
-                suite: self.suite,
-                expected_bytes,
-                actual_bytes: self.public_key.len(),
+        if self.ciphertext_suite != expectations.ciphertext_suite {
+            return Err(MpcConfigIncompatibility::CiphertextSuiteMismatch {
+                expected: expectations.ciphertext_suite,
+                actual: self.ciphertext_suite,
             });
         }
         Ok(())
@@ -99,11 +116,12 @@ impl MpcPublicConfig {
 }
 
 /// What the Coprocessor expects from a loaded MPC public configuration. The
-/// host populates this from its own configured chain, domain, and chosen
-/// suite before the first config load.
+/// host populates this from its own configured chain, domain, and expected
+/// control-plane algorithms before the first config load.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MpcConfigExpectations {
     pub chain_id: ChainId,
     pub domain_id: DomainId,
-    pub suite: MpcSuite,
+    pub reader_key_algorithm: ReaderKeyAlgorithm,
+    pub ciphertext_suite: CiphertextSuite,
 }

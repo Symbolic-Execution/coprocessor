@@ -2,9 +2,12 @@
 /// plus the parse function and per-field deserializers.
 use serde::{de::Error as DeError, Deserialize, Deserializer};
 
-use coprocessor_wire_codec::{decode_hex_lower, decode_hex_lower_variable};
+use coprocessor_wire_codec::decode_hex_lower;
 
-use super::config::{AttestationDigest, ChainId, DomainId, KeyId, MpcPublicConfig, MpcSuite};
+use super::config::{
+    AttestationDigest, ChainId, CiphertextSuite, DomainId, KeyId, MpcPublicConfig,
+    ReaderKeyAlgorithm, X25519PublicKey,
+};
 use super::error::MpcConfigParseError;
 use super::serde_mapping::{
     field_shape_marker, invalid_unsigned_marker, map_serde_json_to_mpc_parse_error,
@@ -13,6 +16,7 @@ use super::validation::to_fixed;
 
 const DOMAIN_ID_LEN: usize = 32;
 const KEY_ID_LEN: usize = 32;
+const HPKE_PUBLIC_KEY_LEN: usize = 32;
 const ATTESTATION_DIGEST_LEN: usize = 32;
 
 /// Wire-shaped serde DTO for the MPC public configuration JSON payload.
@@ -26,12 +30,14 @@ pub(super) struct MpcPublicConfigDto {
     pub(super) chain_id: u64,
     #[serde(deserialize_with = "deserialize_domain_id")]
     pub(super) domain_id: String,
-    #[serde(deserialize_with = "deserialize_active_key_id")]
-    pub(super) active_key_id: String,
-    #[serde(deserialize_with = "deserialize_suite")]
-    pub(super) suite: String,
-    #[serde(deserialize_with = "deserialize_public_key")]
-    pub(super) public_key: String,
+    #[serde(deserialize_with = "deserialize_key_id")]
+    pub(super) key_id: String,
+    #[serde(deserialize_with = "deserialize_hpke_public_key")]
+    pub(super) hpke_public_key: String,
+    #[serde(deserialize_with = "deserialize_reader_key_algorithm")]
+    pub(super) reader_key_algorithm: String,
+    #[serde(deserialize_with = "deserialize_ciphertext_suite")]
+    pub(super) ciphertext_suite: String,
     #[serde(deserialize_with = "deserialize_approved_enclave_measurement")]
     pub(super) approved_enclave_measurement: String,
 }
@@ -45,22 +51,30 @@ pub fn parse_mpc_public_config(text: &str) -> Result<MpcPublicConfig, MpcConfigP
         serde_json::from_str(text).map_err(map_serde_json_to_mpc_parse_error)?;
 
     let domain_id_bytes = decode_hex_lower(&dto.domain_id, "domain_id", DOMAIN_ID_LEN)?;
-    let active_key_id_bytes = decode_hex_lower(&dto.active_key_id, "active_key_id", KEY_ID_LEN)?;
+    let key_id_bytes = decode_hex_lower(&dto.key_id, "key_id", KEY_ID_LEN)?;
+    let hpke_public_key_bytes = decode_hex_lower(
+        &dto.hpke_public_key,
+        "hpke_public_key",
+        HPKE_PUBLIC_KEY_LEN,
+    )
+    .map_err(MpcConfigParseError::InvalidHpkePublicKey)?;
     let approved_enclave_measurement_bytes = decode_hex_lower(
         &dto.approved_enclave_measurement,
         "approved_enclave_measurement",
         ATTESTATION_DIGEST_LEN,
     )?;
-    let suite = MpcSuite::from_wire_name(&dto.suite).ok_or(MpcConfigParseError::UnknownSuite)?;
-    let public_key = decode_hex_lower_variable(&dto.public_key, "public_key")
-        .map_err(MpcConfigParseError::InvalidPublicKey)?;
+    let reader_key_algorithm = ReaderKeyAlgorithm::from_wire_name(&dto.reader_key_algorithm)
+        .ok_or(MpcConfigParseError::UnknownReaderKeyAlgorithm)?;
+    let ciphertext_suite = CiphertextSuite::from_wire_name(&dto.ciphertext_suite)
+        .ok_or(MpcConfigParseError::UnknownCiphertextSuite)?;
 
     Ok(MpcPublicConfig {
         chain_id: ChainId(dto.chain_id),
         domain_id: DomainId(to_fixed::<DOMAIN_ID_LEN>(domain_id_bytes)),
-        active_key_id: KeyId(to_fixed::<KEY_ID_LEN>(active_key_id_bytes)),
-        suite,
-        public_key,
+        key_id: KeyId(to_fixed::<KEY_ID_LEN>(key_id_bytes)),
+        hpke_public_key: X25519PublicKey(to_fixed::<HPKE_PUBLIC_KEY_LEN>(hpke_public_key_bytes)),
+        reader_key_algorithm,
+        ciphertext_suite,
         approved_enclave_measurement: AttestationDigest(to_fixed::<ATTESTATION_DIGEST_LEN>(
             approved_enclave_measurement_bytes,
         )),
@@ -147,25 +161,32 @@ where
     deserialize_string_field(deserializer, "domain_id")
 }
 
-fn deserialize_active_key_id<'de, D>(deserializer: D) -> Result<String, D::Error>
+fn deserialize_key_id<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
 {
-    deserialize_string_field(deserializer, "active_key_id")
+    deserialize_string_field(deserializer, "key_id")
 }
 
-fn deserialize_suite<'de, D>(deserializer: D) -> Result<String, D::Error>
+fn deserialize_hpke_public_key<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
 {
-    deserialize_string_field(deserializer, "suite")
+    deserialize_string_field(deserializer, "hpke_public_key")
 }
 
-fn deserialize_public_key<'de, D>(deserializer: D) -> Result<String, D::Error>
+fn deserialize_reader_key_algorithm<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
 {
-    deserialize_string_field(deserializer, "public_key")
+    deserialize_string_field(deserializer, "reader_key_algorithm")
+}
+
+fn deserialize_ciphertext_suite<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_string_field(deserializer, "ciphertext_suite")
 }
 
 fn deserialize_approved_enclave_measurement<'de, D>(deserializer: D) -> Result<String, D::Error>

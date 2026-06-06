@@ -8,7 +8,8 @@ use coprocessor_ciphertext_binding::DomainId;
 use coprocessor_handle_graph_core::ChainId;
 use coprocessor_mpc::{
     parse_mpc_public_config, HexDecodeError, JsonParseError, MpcConfigIncompatibility,
-    MpcConfigLoadError, MpcConfigParseError, MpcConfigSourceError, MpcSuite,
+    MpcConfigLoadError, MpcConfigParseError, MpcConfigSourceError,
+    CiphertextSuite, ReaderKeyAlgorithm,
 };
 
 const FORBIDDEN_DISPLAY_FRAGMENTS: &[&str] = &[
@@ -79,32 +80,34 @@ fn mpc_source_unavailable_display_includes_detail_not_bytes() {
 }
 
 // ---------------------------------------------------------------------------
-// MpcConfigParseError::InvalidPublicKey must not include raw hex content
+// MpcConfigParseError::InvalidHpkePublicKey must not include raw hex content
 // from the offending bytes — only the category label.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn invalid_public_key_display_is_category_label_only() {
+fn invalid_hpke_public_key_display_is_category_label_only() {
     let hex_err = HexDecodeError::InvalidDigit {
-        field: "public_key",
+        field: "hpke_public_key",
     };
-    let err = MpcConfigParseError::InvalidPublicKey(hex_err);
+    let err = MpcConfigParseError::InvalidHpkePublicKey(hex_err);
     let display = format!("{}", err);
-    assert_display_is_non_secret("MpcConfigParseError::InvalidPublicKey", &display);
+    assert_display_is_non_secret("MpcConfigParseError::InvalidHpkePublicKey", &display);
 }
 
 #[test]
 fn parse_error_display_variants_are_non_secret() {
     let cases = vec![
-        MpcConfigParseError::Json(JsonParseError::MissingField { field: "suite" }),
+        MpcConfigParseError::Json(JsonParseError::MissingField {
+            field: "ciphertext_suite",
+        }),
         MpcConfigParseError::Hex(HexDecodeError::WrongByteLength {
             field: "domain_id",
             expected: 32,
             actual: 31,
         }),
-        MpcConfigParseError::UnknownSuite,
-        MpcConfigParseError::InvalidPublicKey(HexDecodeError::InvalidDigit {
-            field: "public_key",
+        MpcConfigParseError::UnknownCiphertextSuite,
+        MpcConfigParseError::InvalidHpkePublicKey(HexDecodeError::InvalidDigit {
+            field: "hpke_public_key",
         }),
     ];
 
@@ -117,10 +120,10 @@ fn parse_error_display_variants_are_non_secret() {
 #[test]
 fn serde_parse_error_debug_does_not_expose_raw_input_fragments() {
     let secret_value_payload = format!(
-        r#"{{"chain_id":"PAYLOAD_SECRET_42","domain_id":"{}","active_key_id":"{}","suite":"bls12-381-g1","public_key":"{}","approved_enclave_measurement":"{}"}}"#,
+        r#"{{"chain_id":"PAYLOAD_SECRET_42","domain_id":"{}","key_id":"{}","hpke_public_key":"{}","reader_key_algorithm":"X25519","ciphertext_suite":"HpkeX25519HkdfSha256Aes256Gcm","approved_enclave_measurement":"{}"}}"#,
         hex_bytes(0x11, 32),
         hex_bytes(0x22, 32),
-        hex_bytes(0x44, 48),
+        hex_bytes(0x44, 32),
         hex_bytes(0x33, 32),
     );
     let err = parse_mpc_public_config(&secret_value_payload).unwrap_err();
@@ -131,10 +134,10 @@ fn serde_parse_error_debug_does_not_expose_raw_input_fragments() {
     );
 
     let secret_field_payload = format!(
-        r#"{{"chain_id":1,"domain_id":"{}","active_key_id":"{}","suite":"bls12-381-g1","public_key":"{}","approved_enclave_measurement":"{}","PAYLOAD_SECRET_FIELD":0}}"#,
+        r#"{{"chain_id":1,"domain_id":"{}","key_id":"{}","hpke_public_key":"{}","reader_key_algorithm":"X25519","ciphertext_suite":"HpkeX25519HkdfSha256Aes256Gcm","approved_enclave_measurement":"{}","PAYLOAD_SECRET_FIELD":0}}"#,
         hex_bytes(0x11, 32),
         hex_bytes(0x22, 32),
-        hex_bytes(0x44, 48),
+        hex_bytes(0x44, 32),
         hex_bytes(0x33, 32),
     );
     let err = parse_mpc_public_config(&secret_field_payload).unwrap_err();
@@ -163,7 +166,9 @@ fn load_error_display_variants_are_non_secret() {
         (
             "Malformed(Json)",
             MpcConfigLoadError::Malformed(MpcConfigParseError::Json(
-                JsonParseError::MissingField { field: "suite" },
+                JsonParseError::MissingField {
+                    field: "ciphertext_suite",
+                },
             )),
         ),
         (
@@ -202,16 +207,21 @@ fn chain_id_mismatch_display_is_non_empty_and_non_secret() {
 }
 
 #[test]
-fn public_key_shape_display_contains_counts_not_key_bytes() {
-    let err = MpcConfigIncompatibility::PublicKeyShape {
-        suite: MpcSuite::Bls12_381G1,
-        expected_bytes: 48,
-        actual_bytes: 47,
+fn reader_key_algorithm_mismatch_display_is_non_secret() {
+    let err = MpcConfigIncompatibility::ReaderKeyAlgorithmMismatch {
+        expected: ReaderKeyAlgorithm::X25519,
+        actual: ReaderKeyAlgorithm::X25519,
     };
     let display = format!("{}", err);
-    assert_display_is_non_secret("PublicKeyShape", &display);
-    assert!(
-        display.contains("48") && display.contains("47"),
-        "PublicKeyShape display should retain shape counts: {display:?}"
-    );
+    assert_display_is_non_secret("ReaderKeyAlgorithmMismatch", &display);
+}
+
+#[test]
+fn ciphertext_suite_mismatch_display_is_non_secret() {
+    let err = MpcConfigIncompatibility::CiphertextSuiteMismatch {
+        expected: CiphertextSuite::HpkeX25519HkdfSha256Aes256Gcm,
+        actual: CiphertextSuite::HpkeX25519HkdfSha256Aes256Gcm,
+    };
+    let display = format!("{}", err);
+    assert_display_is_non_secret("CiphertextSuiteMismatch", &display);
 }

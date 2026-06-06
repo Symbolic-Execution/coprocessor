@@ -11,12 +11,14 @@ mod config_common;
 
 use coprocessor_mpc::{
     load_mpc_public_config, parse_mpc_public_config, ChainId, DomainId, HexDecodeError,
-    JsonParseError, MpcConfigIncompatibility, MpcConfigLoadError, MpcConfigParseError, MpcSuite,
+    JsonParseError, MpcConfigIncompatibility, MpcConfigLoadError, MpcConfigParseError,
+    ReaderKeyAlgorithm, CiphertextSuite, X25519PublicKey,
 };
 
 use config_common::{
     build_json, hex32, hex_bytes, matching_expectations, valid_config_json, FlakyOnceSource,
-    JsonValue, StubSource, UnavailableSource, TEST_ENCLAVE_MEASUREMENT, TEST_KEY_ID,
+    JsonValue, StubSource, UnavailableSource, TEST_CIPHERTEXT_SUITE,
+    TEST_ENCLAVE_MEASUREMENT, TEST_KEY_ID, TEST_READER_KEY_ALGORITHM,
 };
 
 #[test]
@@ -27,13 +29,10 @@ fn load_succeeds_when_payload_matches_expectations() {
 
     assert_eq!(config.chain_id, ChainId(1));
     assert_eq!(config.domain_id, DomainId([0x11; 32]));
-    assert_eq!(config.active_key_id, TEST_KEY_ID);
-    assert_eq!(config.suite, MpcSuite::Bls12_381G1);
-    assert_eq!(
-        config.public_key.len(),
-        MpcSuite::Bls12_381G1.public_key_len()
-    );
-    assert!(config.public_key.iter().all(|byte| *byte == 0x44));
+    assert_eq!(config.key_id, TEST_KEY_ID);
+    assert_eq!(config.hpke_public_key, X25519PublicKey([0x44; 32]));
+    assert_eq!(config.reader_key_algorithm, TEST_READER_KEY_ALGORITHM);
+    assert_eq!(config.ciphertext_suite, TEST_CIPHERTEXT_SUITE);
     assert_eq!(
         config.approved_enclave_measurement,
         TEST_ENCLAVE_MEASUREMENT
@@ -45,9 +44,13 @@ fn chain_id_mismatch_surfaces_incompatible_load_error() {
     let payload = build_json(&[
         ("chain_id", JsonValue::Uint(999)),
         ("domain_id", JsonValue::Str(&hex32(0x11))),
-        ("active_key_id", JsonValue::Str(&hex32(0x22))),
-        ("suite", JsonValue::Str("bls12-381-g1")),
-        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("key_id", JsonValue::Str(&hex32(0x22))),
+        ("hpke_public_key", JsonValue::Str(&hex_bytes(0x44, 32))),
+        ("reader_key_algorithm", JsonValue::Str("X25519")),
+        (
+            "ciphertext_suite",
+            JsonValue::Str("HpkeX25519HkdfSha256Aes256Gcm"),
+        ),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ]);
     let source = StubSource::new(payload);
@@ -68,9 +71,13 @@ fn domain_id_mismatch_surfaces_incompatible_load_error() {
     let payload = build_json(&[
         ("chain_id", JsonValue::Uint(1)),
         ("domain_id", JsonValue::Str(&hex32(0xAA))),
-        ("active_key_id", JsonValue::Str(&hex32(0x22))),
-        ("suite", JsonValue::Str("bls12-381-g1")),
-        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("key_id", JsonValue::Str(&hex32(0x22))),
+        ("hpke_public_key", JsonValue::Str(&hex_bytes(0x44, 32))),
+        ("reader_key_algorithm", JsonValue::Str("X25519")),
+        (
+            "ciphertext_suite",
+            JsonValue::Str("HpkeX25519HkdfSha256Aes256Gcm"),
+        ),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ]);
     let source = StubSource::new(payload);
@@ -84,13 +91,17 @@ fn domain_id_mismatch_surfaces_incompatible_load_error() {
 }
 
 #[test]
-fn unknown_suite_in_payload_is_parse_error_not_compatibility_error() {
+fn unknown_reader_key_algorithm_in_payload_is_parse_error_not_compatibility_error() {
     let payload = build_json(&[
         ("chain_id", JsonValue::Uint(1)),
         ("domain_id", JsonValue::Str(&hex32(0x11))),
-        ("active_key_id", JsonValue::Str(&hex32(0x22))),
-        ("suite", JsonValue::Str("not-a-real-suite")),
-        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("key_id", JsonValue::Str(&hex32(0x22))),
+        ("hpke_public_key", JsonValue::Str(&hex_bytes(0x44, 32))),
+        ("reader_key_algorithm", JsonValue::Str("bogus-algorithm")),
+        (
+            "ciphertext_suite",
+            JsonValue::Str("HpkeX25519HkdfSha256Aes256Gcm"),
+        ),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ]);
     let source = StubSource::new(payload);
@@ -99,19 +110,23 @@ fn unknown_suite_in_payload_is_parse_error_not_compatibility_error() {
 
     assert!(matches!(
         err,
-        MpcConfigLoadError::Malformed(MpcConfigParseError::UnknownSuite)
+        MpcConfigLoadError::Malformed(MpcConfigParseError::UnknownReaderKeyAlgorithm)
     ));
 }
 
 #[test]
-fn public_key_byte_length_off_by_one_is_key_shape_mismatch() {
-    let short_key = hex_bytes(0x44, 47);
+fn hpke_public_key_wrong_byte_length_is_malformed() {
+    let short_key = hex_bytes(0x44, 31);
     let payload = build_json(&[
         ("chain_id", JsonValue::Uint(1)),
         ("domain_id", JsonValue::Str(&hex32(0x11))),
-        ("active_key_id", JsonValue::Str(&hex32(0x22))),
-        ("suite", JsonValue::Str("bls12-381-g1")),
-        ("public_key", JsonValue::Str(&short_key)),
+        ("key_id", JsonValue::Str(&hex32(0x22))),
+        ("hpke_public_key", JsonValue::Str(&short_key)),
+        ("reader_key_algorithm", JsonValue::Str("X25519")),
+        (
+            "ciphertext_suite",
+            JsonValue::Str("HpkeX25519HkdfSha256Aes256Gcm"),
+        ),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ]);
     let source = StubSource::new(payload);
@@ -120,11 +135,13 @@ fn public_key_byte_length_off_by_one_is_key_shape_mismatch() {
 
     assert!(matches!(
         err,
-        MpcConfigLoadError::Incompatible(MpcConfigIncompatibility::PublicKeyShape {
-            suite: MpcSuite::Bls12_381G1,
-            expected_bytes: 48,
-            actual_bytes: 47,
-        })
+        MpcConfigLoadError::Malformed(MpcConfigParseError::InvalidHpkePublicKey(
+            HexDecodeError::WrongByteLength {
+                field: "hpke_public_key",
+                expected: 32,
+                actual: 31,
+            }
+        ))
     ));
 }
 
@@ -172,9 +189,13 @@ fn unavailable_failure_is_distinct_from_malformed_and_incompatible() {
     let incompatible_payload = build_json(&[
         ("chain_id", JsonValue::Uint(2)),
         ("domain_id", JsonValue::Str(&hex32(0x11))),
-        ("active_key_id", JsonValue::Str(&hex32(0x22))),
-        ("suite", JsonValue::Str("bls12-381-g1")),
-        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("key_id", JsonValue::Str(&hex32(0x22))),
+        ("hpke_public_key", JsonValue::Str(&hex_bytes(0x44, 32))),
+        ("reader_key_algorithm", JsonValue::Str("X25519")),
+        (
+            "ciphertext_suite",
+            JsonValue::Str("HpkeX25519HkdfSha256Aes256Gcm"),
+        ),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ]);
     let incompatible = load_mpc_public_config(
@@ -197,7 +218,11 @@ fn second_load_after_transient_failure_succeeds() {
     assert!(matches!(first, MpcConfigLoadError::Unavailable { .. }));
 
     let second = load_mpc_public_config(&source, &expectations).unwrap();
-    assert_eq!(second.suite, MpcSuite::Bls12_381G1);
+    assert_eq!(second.reader_key_algorithm, ReaderKeyAlgorithm::X25519);
+    assert_eq!(
+        second.ciphertext_suite,
+        CiphertextSuite::HpkeX25519HkdfSha256Aes256Gcm
+    );
 }
 
 #[test]
@@ -205,9 +230,10 @@ fn parse_rejects_missing_field() {
     let payload = build_json(&[
         ("chain_id", JsonValue::Uint(1)),
         ("domain_id", JsonValue::Str(&hex32(0x11))),
-        ("active_key_id", JsonValue::Str(&hex32(0x22))),
-        ("suite", JsonValue::Str("bls12-381-g1")),
-        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("key_id", JsonValue::Str(&hex32(0x22))),
+        ("hpke_public_key", JsonValue::Str(&hex_bytes(0x44, 32))),
+        ("reader_key_algorithm", JsonValue::Str("X25519")),
+        ("ciphertext_suite", JsonValue::Str("HpkeX25519HkdfSha256Aes256Gcm")),
     ]);
 
     let err = parse_mpc_public_config(&payload).unwrap_err();
@@ -225,9 +251,10 @@ fn parse_rejects_unexpected_extra_field() {
     let payload = build_json(&[
         ("chain_id", JsonValue::Uint(1)),
         ("domain_id", JsonValue::Str(&hex32(0x11))),
-        ("active_key_id", JsonValue::Str(&hex32(0x22))),
-        ("suite", JsonValue::Str("bls12-381-g1")),
-        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("key_id", JsonValue::Str(&hex32(0x22))),
+        ("hpke_public_key", JsonValue::Str(&hex_bytes(0x44, 32))),
+        ("reader_key_algorithm", JsonValue::Str("X25519")),
+        ("ciphertext_suite", JsonValue::Str("HpkeX25519HkdfSha256Aes256Gcm")),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
         ("rogue_field", JsonValue::Uint(0)),
     ]);
@@ -255,9 +282,10 @@ fn parse_rejects_wrong_shape_for_string_field_with_field_name() {
     let payload = build_json(&[
         ("chain_id", JsonValue::Uint(1)),
         ("domain_id", JsonValue::Uint(1)),
-        ("active_key_id", JsonValue::Str(&hex32(0x22))),
-        ("suite", JsonValue::Str("bls12-381-g1")),
-        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("key_id", JsonValue::Str(&hex32(0x22))),
+        ("hpke_public_key", JsonValue::Str(&hex_bytes(0x44, 32))),
+        ("reader_key_algorithm", JsonValue::Str("X25519")),
+        ("ciphertext_suite", JsonValue::Str("HpkeX25519HkdfSha256Aes256Gcm")),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ]);
 
@@ -277,9 +305,10 @@ fn parse_rejects_wrong_shape_for_chain_id_with_field_name() {
     let payload = build_json(&[
         ("chain_id", JsonValue::Str("not-a-number")),
         ("domain_id", JsonValue::Str(&hex32(0x11))),
-        ("active_key_id", JsonValue::Str(&hex32(0x22))),
-        ("suite", JsonValue::Str("bls12-381-g1")),
-        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("key_id", JsonValue::Str(&hex32(0x22))),
+        ("hpke_public_key", JsonValue::Str(&hex_bytes(0x44, 32))),
+        ("reader_key_algorithm", JsonValue::Str("X25519")),
+        ("ciphertext_suite", JsonValue::Str("HpkeX25519HkdfSha256Aes256Gcm")),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ]);
 
@@ -300,9 +329,10 @@ fn parse_rejects_invalid_hex_digit_in_domain_id() {
     let payload = build_json(&[
         ("chain_id", JsonValue::Uint(1)),
         ("domain_id", JsonValue::Str(&bad_domain)),
-        ("active_key_id", JsonValue::Str(&hex32(0x22))),
-        ("suite", JsonValue::Str("bls12-381-g1")),
-        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("key_id", JsonValue::Str(&hex32(0x22))),
+        ("hpke_public_key", JsonValue::Str(&hex_bytes(0x44, 32))),
+        ("reader_key_algorithm", JsonValue::Str("X25519")),
+        ("ciphertext_suite", JsonValue::Str("HpkeX25519HkdfSha256Aes256Gcm")),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ]);
 
@@ -320,9 +350,10 @@ fn parse_rejects_escape_sequence_in_hex_field_before_hex_validation() {
     let payload = build_json(&[
         ("chain_id", JsonValue::Uint(1)),
         ("domain_id", JsonValue::Str(&escaped_domain)),
-        ("active_key_id", JsonValue::Str(&hex32(0x22))),
-        ("suite", JsonValue::Str("bls12-381-g1")),
-        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("key_id", JsonValue::Str(&hex32(0x22))),
+        ("hpke_public_key", JsonValue::Str(&hex_bytes(0x44, 32))),
+        ("reader_key_algorithm", JsonValue::Str("X25519")),
+        ("ciphertext_suite", JsonValue::Str("HpkeX25519HkdfSha256Aes256Gcm")),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ]);
 
@@ -335,14 +366,15 @@ fn parse_rejects_escape_sequence_in_hex_field_before_hex_validation() {
 }
 
 #[test]
-fn parse_rejects_public_key_with_odd_hex_length() {
-    let odd_key = "0x".to_string() + &"4".repeat(95);
+fn parse_rejects_hpke_public_key_with_odd_hex_length() {
+    let odd_key = "0x".to_string() + &"4".repeat(63);
     let payload = build_json(&[
         ("chain_id", JsonValue::Uint(1)),
         ("domain_id", JsonValue::Str(&hex32(0x11))),
-        ("active_key_id", JsonValue::Str(&hex32(0x22))),
-        ("suite", JsonValue::Str("bls12-381-g1")),
-        ("public_key", JsonValue::Str(&odd_key)),
+        ("key_id", JsonValue::Str(&hex32(0x22))),
+        ("hpke_public_key", JsonValue::Str(&odd_key)),
+        ("reader_key_algorithm", JsonValue::Str("X25519")),
+        ("ciphertext_suite", JsonValue::Str("HpkeX25519HkdfSha256Aes256Gcm")),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ]);
 
@@ -350,8 +382,8 @@ fn parse_rejects_public_key_with_odd_hex_length() {
 
     assert!(matches!(
         err,
-        MpcConfigParseError::InvalidPublicKey(HexDecodeError::OddLength {
-            field: "public_key",
+        MpcConfigParseError::InvalidHpkePublicKey(HexDecodeError::OddLength {
+            field: "hpke_public_key",
             ..
         })
     ));
@@ -359,7 +391,7 @@ fn parse_rejects_public_key_with_odd_hex_length() {
     let rendered = format!("{err}");
     assert!(
         !rendered.contains(&odd_key),
-        "parse error display must not include raw public_key bytes: {rendered}"
+        "parse error display must not include raw hpke_public_key bytes: {rendered}"
     );
 }
 
@@ -369,9 +401,10 @@ fn parse_rejects_domain_id_with_missing_hex_prefix() {
     let payload = build_json(&[
         ("chain_id", JsonValue::Uint(1)),
         ("domain_id", JsonValue::Str(&no_prefix)),
-        ("active_key_id", JsonValue::Str(&hex32(0x22))),
-        ("suite", JsonValue::Str("bls12-381-g1")),
-        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("key_id", JsonValue::Str(&hex32(0x22))),
+        ("hpke_public_key", JsonValue::Str(&hex_bytes(0x44, 32))),
+        ("reader_key_algorithm", JsonValue::Str("X25519")),
+        ("ciphertext_suite", JsonValue::Str("HpkeX25519HkdfSha256Aes256Gcm")),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ]);
 
@@ -389,9 +422,10 @@ fn parse_rejects_domain_id_with_uppercase_hex() {
     let payload = build_json(&[
         ("chain_id", JsonValue::Uint(1)),
         ("domain_id", JsonValue::Str(&uppercase)),
-        ("active_key_id", JsonValue::Str(&hex32(0x22))),
-        ("suite", JsonValue::Str("bls12-381-g1")),
-        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("key_id", JsonValue::Str(&hex32(0x22))),
+        ("hpke_public_key", JsonValue::Str(&hex_bytes(0x44, 32))),
+        ("reader_key_algorithm", JsonValue::Str("X25519")),
+        ("ciphertext_suite", JsonValue::Str("HpkeX25519HkdfSha256Aes256Gcm")),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ]);
 
@@ -409,9 +443,10 @@ fn parse_rejects_domain_id_with_wrong_byte_length() {
     let payload = build_json(&[
         ("chain_id", JsonValue::Uint(1)),
         ("domain_id", JsonValue::Str(&too_short)),
-        ("active_key_id", JsonValue::Str(&hex32(0x22))),
-        ("suite", JsonValue::Str("bls12-381-g1")),
-        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("key_id", JsonValue::Str(&hex32(0x22))),
+        ("hpke_public_key", JsonValue::Str(&hex_bytes(0x44, 32))),
+        ("reader_key_algorithm", JsonValue::Str("X25519")),
+        ("ciphertext_suite", JsonValue::Str("HpkeX25519HkdfSha256Aes256Gcm")),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ]);
 
@@ -430,26 +465,25 @@ fn parse_rejects_domain_id_with_wrong_byte_length() {
 #[test]
 fn parse_rejects_duplicate_field_as_malformed() {
     // Duplicate fields must be rejected as malformed (not silently accepted).
-    let payload = r#"{"chain_id":1,"chain_id":2,"domain_id":"0x1111111111111111111111111111111111111111111111111111111111111111","active_key_id":"0x2222222222222222222222222222222222222222222222222222222222222222","suite":"bls12-381-g1","public_key":"0x444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444","approved_enclave_measurement":"0x3333333333333333333333333333333333333333333333333333333333333333"}"#;
+    let payload = r#"{"chain_id":1,"chain_id":2,"domain_id":"0x1111111111111111111111111111111111111111111111111111111111111111","key_id":"0x2222222222222222222222222222222222222222222222222222222222222222","hpke_public_key":"0x4444444444444444444444444444444444444444444444444444444444444444","reader_key_algorithm":"X25519","ciphertext_suite":"HpkeX25519HkdfSha256Aes256Gcm","approved_enclave_measurement":"0x3333333333333333333333333333333333333333333333333333333333333333"}"#;
 
     let err = parse_mpc_public_config(payload).unwrap_err();
 
-    // Must be a Json-category error, not a hex or suite error.
+    // Must be a Json-category error, not a hex or algorithm/suite error.
     assert!(matches!(err, MpcConfigParseError::Json(_)));
 }
 
 #[test]
-fn suite_mismatch_surfaces_incompatible_not_malformed() {
+fn ciphertext_suite_mismatch_surfaces_incompatible_not_malformed() {
     // A wrong-but-known suite should be parsed successfully and then fail
-    // compatibility, not fail parsing — there is only one suite today, so we
-    // construct a config with the right suite and wrong chain_id to confirm
-    // incompatible flows through check_compatibility, not parse.
+    // compatibility, not fail parsing.
     let payload = build_json(&[
         ("chain_id", JsonValue::Uint(1)),
         ("domain_id", JsonValue::Str(&hex32(0x11))),
-        ("active_key_id", JsonValue::Str(&hex32(0x22))),
-        ("suite", JsonValue::Str("bls12-381-g1")),
-        ("public_key", JsonValue::Str(&hex_bytes(0x44, 48))),
+        ("key_id", JsonValue::Str(&hex32(0x22))),
+        ("hpke_public_key", JsonValue::Str(&hex_bytes(0x44, 32))),
+        ("reader_key_algorithm", JsonValue::Str("X25519")),
+        ("ciphertext_suite", JsonValue::Str("HpkeX25519HkdfSha256Aes256Gcm")),
         ("approved_enclave_measurement", JsonValue::Str(&hex32(0x33))),
     ]);
 
@@ -457,6 +491,6 @@ fn suite_mismatch_surfaces_incompatible_not_malformed() {
     let result = parse_mpc_public_config(&payload);
     assert!(
         result.is_ok(),
-        "valid payload with known suite must parse: {result:?}"
+        "valid payload with known ciphertext suite must parse: {result:?}"
     );
 }

@@ -1,7 +1,7 @@
 /// MPC configuration compatibility check results.
 use thiserror::Error;
 
-use super::config::{ChainId, DomainId, MpcSuite};
+use super::config::{ChainId, CiphertextSuite, DomainId, ReaderKeyAlgorithm};
 
 /// One configuration dimension the loaded MPC public configuration did not
 /// match. Distinct from parse errors and backend availability errors so the
@@ -17,15 +17,14 @@ pub enum MpcConfigIncompatibility {
         expected: DomainId,
         actual: DomainId,
     },
-    #[error("suite mismatch: expected {expected:?}, actual {actual:?}")]
-    SuiteMismatch {
-        expected: MpcSuite,
-        actual: MpcSuite,
+    #[error("reader_key_algorithm mismatch: expected {expected:?}, actual {actual:?}")]
+    ReaderKeyAlgorithmMismatch {
+        expected: ReaderKeyAlgorithm,
+        actual: ReaderKeyAlgorithm,
     },
-    #[error("public key shape mismatch for suite {suite:?}: expected {expected_bytes} bytes, actual {actual_bytes} bytes")]
-    PublicKeyShape {
-        suite: MpcSuite,
-        expected_bytes: usize,
-        actual_bytes: usize,
+    #[error("ciphertext_suite mismatch: expected {expected:?}, actual {actual:?}")]
+    CiphertextSuiteMismatch {
+        expected: CiphertextSuite,
+        actual: CiphertextSuite,
     },
 }
