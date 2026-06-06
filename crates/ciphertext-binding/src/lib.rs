@@ -34,5 +34,6 @@ pub use aad::{
 };
 
 pub use envelope::{
-    EnclaveCiphertextV1, EnvelopeDecodeError, ReaderCiphertextV1, SystemCiphertextV1,
+    CanonicalSystemCiphertextV1, EnclaveCiphertextV1, EnvelopeDecodeError, ReaderCiphertextV1,
+    SystemCiphertextV1,
 };

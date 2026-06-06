@@ -4,6 +4,9 @@ use coprocessor_handle_graph_core::{
     OperationCode, PublicPlaintextValue, SystemCiphertextV1, HANDLE_FROM_PLAINTEXT_V1_SIGNATURE,
     HANDLE_IMPORTED_V1_SIGNATURE, OPERATION_REQUESTED_V1_SIGNATURE,
 };
+use coprocessor_ciphertext_binding::{
+    CanonicalSystemCiphertextV1, KeyId, SystemHandleAadV1,
+};
 
 // ---------------------------------------------------------------------------
 // Decode happy-path tests
@@ -25,7 +28,10 @@ fn handle_imported_v1_log_decodes_into_imported_handle_chain_event() {
             address_topic(contract_addr),
             bytes32(0x42),
         ],
-        data: encode_imported_data(HandleType::Suint256, &[1, 2, 3, 4]),
+        data: encode_imported_data(
+            HandleType::Suint256,
+            &sample_imported_system_ciphertext(bytes32(0x42)).encode(),
+        ),
     };
 
     let event = decode_chain_log(&log).expect("imported v1 log should decode");
@@ -44,7 +50,7 @@ fn handle_imported_v1_log_decodes_into_imported_handle_chain_event() {
     assert_eq!(imported.handle_type, HandleType::Suint256);
     assert_eq!(
         imported.system_ciphertext,
-        SystemCiphertextV1(vec![1, 2, 3, 4])
+        SystemCiphertextV1(sample_imported_system_ciphertext(bytes32(0x42)).encode())
     );
     assert_eq!(
         imported.event_ref,
@@ -75,7 +81,10 @@ fn contract_address_is_decoded_from_topic2_not_log_emitter() {
             address_topic(topic_addr),
             bytes32(0x42),
         ],
-        data: encode_imported_data(HandleType::Suint256, &[1, 2, 3]),
+        data: encode_imported_data(
+            HandleType::Suint256,
+            &sample_imported_system_ciphertext(bytes32(0x42)).encode(),
+        ),
     };
 
     let event = decode_chain_log(&log).expect("should decode");
@@ -91,7 +100,7 @@ fn contract_address_is_decoded_from_topic2_not_log_emitter() {
 
 #[test]
 fn handle_imported_v1_preserves_opaque_ciphertext_bytes_unchanged() {
-    let ciphertext: Vec<u8> = (0u8..=255u8).collect();
+    let ciphertext = sample_imported_system_ciphertext(bytes32(1)).encode();
     let log = ChainLog {
         chain_id: ChainId(1),
         contract_address: ContractAddress([7; 20]),
@@ -113,6 +122,30 @@ fn handle_imported_v1_preserves_opaque_ciphertext_bytes_unchanged() {
         panic!("expected ImportedHandle");
     };
     assert_eq!(imported.system_ciphertext.0, ciphertext);
+}
+
+#[test]
+fn handle_imported_v1_rejects_noncanonical_system_ciphertext_bytes() {
+    let log = ChainLog {
+        chain_id: ChainId(1),
+        contract_address: ContractAddress([7; 20]),
+        block_number: 1,
+        block_hash: bytes32(1),
+        tx_hash: bytes32(1),
+        log_index: 0,
+        topics: vec![
+            HANDLE_IMPORTED_V1_SIGNATURE,
+            bytes32(0xD0),
+            address_topic([7; 20]),
+            bytes32(1),
+        ],
+        data: encode_imported_data(HandleType::Sbool, &[0x01, 0x02, 0x03, 0x04]),
+    };
+
+    assert_eq!(
+        decode_chain_log(&log),
+        Err(ChainLogDecodeError::MalformedAbiData)
+    );
 }
 
 #[test]
@@ -266,7 +299,10 @@ fn operation_requested_v1_decodes_every_operation_code_discriminant() {
 #[test]
 fn handle_type_discriminants_are_1_based_both_values_roundtrip() {
     for (handle_type, disc) in [(HandleType::Suint256, 1u8), (HandleType::Sbool, 2u8)] {
-        let mut data = encode_imported_data(HandleType::Suint256, &[1]);
+        let mut data = encode_imported_data(
+            HandleType::Suint256,
+            &sample_imported_system_ciphertext(bytes32(0x42)).encode(),
+        );
         data[31] = disc; // overwrite handleType in the first ABI slot
         let log = ChainLog {
             chain_id: ChainId(1),
@@ -636,7 +672,10 @@ fn decoded_imported_handle_event_flows_into_apply_chain_event() {
             address_topic([7; 20]),
             bytes32(0x42),
         ],
-        data: encode_imported_data(HandleType::Suint256, &[1, 2, 3]),
+        data: encode_imported_data(
+            HandleType::Suint256,
+            &sample_imported_system_ciphertext(bytes32(0x42)).encode(),
+        ),
     };
     let event = decode_chain_log(&log).expect("decode imported");
 
@@ -750,4 +789,24 @@ fn operation_code_disc(op: OperationCode) -> u8 {
 
 fn bytes32(seed: u8) -> [u8; 32] {
     [seed; 32]
+}
+
+fn sample_imported_system_ciphertext(handle_id: [u8; 32]) -> CanonicalSystemCiphertextV1 {
+    let aad = SystemHandleAadV1 {
+        version: 1,
+        chain_id: 1,
+        domain_id: coprocessor_ciphertext_binding::DomainId(bytes32(0xD0)),
+        handle_id: coprocessor_ciphertext_binding::HandleId(handle_id),
+        type_tag: "suint256".to_string(),
+        key_id: KeyId(bytes32(0xAA)),
+    }
+    .encode();
+    CanonicalSystemCiphertextV1 {
+        key_id: KeyId(bytes32(0xAA)),
+        enc: vec![0x11, 0x22, 0x33],
+        wrapped_key: vec![0x44, 0x55, 0x66],
+        nonce: [0x77; 12],
+        ciphertext: vec![0x88, 0x99, 0xAA],
+        aad,
+    }
 }

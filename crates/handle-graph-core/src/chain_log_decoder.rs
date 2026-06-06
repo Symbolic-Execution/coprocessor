@@ -27,6 +27,7 @@
 
 use alloy_primitives::B256;
 use alloy_sol_types::{sol, SolEvent};
+use coprocessor_ciphertext_binding::CanonicalSystemCiphertextV1;
 
 use crate::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DerivedHandleOperation, DomainId,
@@ -170,7 +171,12 @@ fn decode_imported(
             handle_id: HandleId(decoded.handleId.0),
         },
         handle_type,
-        system_ciphertext: SystemCiphertextV1(decoded.systemCiphertext.to_vec()),
+        system_ciphertext: {
+            let bytes = decoded.systemCiphertext.to_vec();
+            CanonicalSystemCiphertextV1::decode(&bytes)
+                .map_err(|_| ChainLogDecodeError::MalformedAbiData)?;
+            SystemCiphertextV1(bytes)
+        },
         event_ref,
     }))
 }
