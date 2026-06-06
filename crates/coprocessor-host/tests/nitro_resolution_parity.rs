@@ -174,7 +174,7 @@ fn zero_expected_public_key_len_fails_host_start() {
             approved_enclave_measurement: SHARED_MEASUREMENT,
             expected_public_key_len: 0,
         }),
-        ..HostConfig::for_local_development()
+        ..HostConfig::for_production_nitro(SHARED_MEASUREMENT, SHARED_PUBLIC_KEY.len())
     };
 
     let mut host = CoprocessorHost::new(config.clone());
@@ -201,13 +201,10 @@ fn zero_expected_public_key_len_fails_host_start() {
 /// All-zero approved_enclave_measurement must fail host start.
 #[test]
 fn all_zero_approved_measurement_fails_host_start() {
-    let config = HostConfig {
-        enclave_attestation: EnclaveAttestationConfig::Nitro(NitroAdapterConfig {
-            approved_enclave_measurement: NitroAttestationDigest([0u8; 32]),
-            expected_public_key_len: 48,
-        }),
-        ..HostConfig::for_local_development()
-    };
+    let config = HostConfig::for_production_nitro(
+        NitroAttestationDigest([0u8; 32]),
+        SHARED_PUBLIC_KEY.len(),
+    );
 
     let mut host = CoprocessorHost::new(config.clone());
     let err = host
@@ -240,7 +237,7 @@ fn build_nitro_source_rejects_zero_key_len() {
             approved_enclave_measurement: SHARED_MEASUREMENT,
             expected_public_key_len: 0,
         }),
-        ..HostConfig::for_local_development()
+        ..HostConfig::for_production_nitro(SHARED_MEASUREMENT, SHARED_PUBLIC_KEY.len())
     };
     let result = config.build_nitro_attestation_source(FakeNitroDocSource::matching());
     assert!(result.is_err(), "zero key len must fail");
@@ -427,7 +424,7 @@ fn nsm_unavailable_exhausts_budget_and_fails() {
             approved_enclave_measurement: SHARED_MEASUREMENT,
             expected_public_key_len: SHARED_PUBLIC_KEY.len(),
         }),
-        ..HostConfig::for_local_development()
+        ..HostConfig::for_production_nitro(SHARED_MEASUREMENT, SHARED_PUBLIC_KEY.len())
     };
     let mut host = CoprocessorHost::new(config);
     host.start().unwrap();
@@ -562,14 +559,16 @@ fn setup_add_scenario(host: &mut CoprocessorHost) -> (HandleKey, HandleKey, Hand
 }
 
 fn host_config_with_shared_local_attestation() -> HostConfig {
-    HostConfig {
+    let mut config = HostConfig {
         enclave_attestation: EnclaveAttestationConfig::Local(LocalEnclaveAttestationConfig {
             enclave_public_key: SHARED_PUBLIC_KEY.to_vec(),
             enclave_measurement: SHARED_MEASUREMENT,
             attestation: SHARED_ATTESTATION.to_vec(),
         }),
         ..HostConfig::for_local_development()
-    }
+    };
+    config.mpc.public_config.approved_enclave_measurement = AttestationDigest(SHARED_MEASUREMENT.0);
+    config
 }
 
 fn extract_derived_receipt(view: &HandleStateView) -> coprocessor_host::DerivedHandleReceiptView {

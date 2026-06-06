@@ -16,8 +16,15 @@ impl CoprocessorHost {
     }
 
     /// Construct a host in the [`LifecycleState::NotStarted`] phase.
+    ///
+    /// The owned [`HandleGraphCore`] is seeded with a
+    /// [`PlaintextMaterializer`] bound to the host's trusted active MPC key
+    /// id, so Plaintext Handle ingestion never falls back to the all-zero
+    /// default materializer.
     pub fn new(config: HostConfig) -> Self {
-        Self::from_handle_graph_core(config, HandleGraphCore::new())
+        let handle_graph_core =
+            HandleGraphCore::with_plaintext_materializer(config.plaintext_materializer());
+        Self::from_handle_graph_core(config, handle_graph_core)
     }
 
     /// Construct a host whose [`HandleGraphCore`] is restored from
@@ -31,19 +38,19 @@ impl CoprocessorHost {
     /// configuration validation and dependency wiring follow the same path as
     /// a fresh boot.
     ///
-    /// The restored Handle Graph uses [`PlaintextMaterializer::default`].
-    /// Callers that subsequently ingest Plaintext Handle events should prefer
-    /// [`Self::restore_from_persistence_with_materializer`] so post-restart
-    /// Plaintext Handle ingestion keeps producing real `SystemCiphertextV1`
-    /// envelopes bound to the host's active MPC key id.
+    /// The restored Handle Graph is re-seeded with a
+    /// [`PlaintextMaterializer`] bound to the host's configured active MPC key
+    /// id, so post-restart Plaintext Handle ingestion keeps producing real
+    /// `SystemCiphertextV1` envelopes without any extra caller wiring.
     pub fn restore_from_persistence<P: HandlePersistence>(
         config: HostConfig,
         persistence: &P,
     ) -> Self {
-        Self::from_handle_graph_core(
-            config,
-            HandleGraphCore::restore_from_persistence(persistence),
-        )
+        let handle_graph_core = HandleGraphCore::restore_from_persistence_with_materializer(
+            persistence,
+            config.plaintext_materializer(),
+        );
+        Self::from_handle_graph_core(config, handle_graph_core)
     }
 
     /// Same as [`Self::restore_from_persistence`], but binds the supplied

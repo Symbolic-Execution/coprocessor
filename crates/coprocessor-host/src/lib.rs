@@ -47,7 +47,9 @@ mod dependency;
 pub use dependency::DependencyName;
 
 mod config;
-pub use config::{EnclaveAttestationConfig, HostConfig, HostConfigError, RetryPolicy};
+pub use config::{
+    EnclaveAttestationConfig, HostConfig, HostConfigError, HostMpcConfig, RetryPolicy,
+};
 
 mod lifecycle;
 pub use lifecycle::{HostStartError, LifecycleState, Readiness};

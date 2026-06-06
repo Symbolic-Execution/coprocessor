@@ -6,9 +6,10 @@
 //! server, a chain RPC, MPC, or the Enclave runtime — those seams are
 //! deliberately unwired in this slice.
 
+use coprocessor_ciphertext_binding as cbinding;
 use coprocessor_handle_graph_core::{
     ChainEvent, ChainEventRef, ChainId, ContractAddress, DomainId, HandleId, HandleKey, HandleType,
-    ImportedHandle, IngestionOutcome, SystemCiphertextV1,
+    ImportedHandle, IngestionOutcome, PlaintextHandle, PublicPlaintextValue, SystemCiphertextV1,
 };
 use coprocessor_host::{
     CoprocessorHost, DependencyName, HostConfig, HostConfigError, HostStartError, LifecycleState,
@@ -168,6 +169,61 @@ fn validate_config_rejects_zero_resolution_attempts() {
     .unwrap_err();
 
     assert_eq!(err, HostConfigError::RetryPolicyRequiresAttempt);
+}
+
+#[test]
+fn plaintext_handle_materialization_uses_configured_active_mpc_key_id() {
+    let config = HostConfig::for_local_development();
+    let expected_key_id = config.mpc.public_config.key_id;
+    let mut host = CoprocessorHost::new(config);
+    host.start().unwrap();
+
+    let handle_key = sample_handle_key();
+    let outcome = host
+        .handle_graph_core_mut()
+        .apply_chain_event(ChainEvent::PlaintextHandle(PlaintextHandle {
+            domain_id: DomainId([0xAB; 32]),
+            handle_key,
+            handle_type: HandleType::Suint256,
+            public_value: PublicPlaintextValue(vec![0x10, 0x20, 0x30]),
+            event_ref: ChainEventRef {
+                chain_id: handle_key.chain_id,
+                block_number: 101,
+                block_hash: [0x11; 32],
+                tx_hash: [0x22; 32],
+                log_index: 1,
+            },
+        }));
+    assert!(matches!(outcome, IngestionOutcome::Recorded(_)));
+
+    let record = host
+        .handle_graph_core()
+        .canonical_handle(&handle_key)
+        .expect("plaintext handle must be recorded");
+    let ready_ciphertext = match &record.state {
+        coprocessor_handle_graph_core::HandleState::Ready {
+            system_ciphertext, ..
+        } => system_ciphertext,
+        other => panic!("expected Ready state, got {other:?}"),
+    };
+    let decoded = cbinding::SystemCiphertextV1::decode(&ready_ciphertext.0)
+        .expect("materialized ciphertext must decode");
+    assert_eq!(
+        decoded.key_id, expected_key_id,
+        "plaintext materializer must bind the host-configured active MPC key id"
+    );
+}
+
+#[test]
+fn validate_config_rejects_mpc_and_enclave_measurement_mismatch() {
+    let mut config = HostConfig::for_local_development();
+    config.mpc.public_config.approved_enclave_measurement = cbinding::AttestationDigest([0x99; 32]);
+
+    let err = CoprocessorHost::validate_config(&config).unwrap_err();
+    assert!(matches!(
+        err,
+        HostConfigError::MpcEnclaveMeasurementMismatch { .. }
+    ));
 }
 
 fn sample_handle_key() -> HandleKey {
