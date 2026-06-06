@@ -28,7 +28,6 @@ pub const SUINT256_TYPE_TAG: &str = "suint256";
 pub const SBOOL_TYPE_TAG: &str = "sbool";
 
 const AAD_VERSION: u8 = 1;
-const ENVELOPE_VERSION: u8 = 1;
 const RECEIPT_VERSION: u8 = 1;
 const RECEIPT_MARKER: &str = "plaintext-materialization-v1";
 
@@ -67,10 +66,22 @@ impl PlaintextMaterializer {
         let aad = self.build_aad(plaintext);
         let aad_bytes = aad.encode();
         let envelope = EnvelopeSystemCiphertextV1 {
-            version: ENVELOPE_VERSION,
+            key_id: self.active_key_id,
+            enc: derive_symbolic_bytes(
+                b"plaintext-materialization/enc",
+                &aad_bytes,
+                &plaintext.public_value.0,
+                32,
+            ),
+            wrapped_key: derive_symbolic_bytes(
+                b"plaintext-materialization/wrapped-key",
+                &aad_bytes,
+                &plaintext.public_value.0,
+                16,
+            ),
+            nonce: derive_symbolic_nonce(&aad_bytes, &plaintext.public_value.0),
+            ciphertext: mask_public_plaintext(&aad_bytes, &plaintext.public_value.0),
             aad: aad_bytes.clone(),
-            wrapped_key: Vec::new(),
-            ciphertext: Vec::new(),
         };
         let system_ciphertext = SystemCiphertextV1(envelope.encode());
         let materialization_receipt = MaterializationReceipt(encode_receipt(&aad_bytes));
@@ -177,5 +188,62 @@ fn write_cbor_header(out: &mut Vec<u8>, major: u8, value: u64) {
     } else {
         out.push(head | 27);
         out.extend_from_slice(&value.to_be_bytes());
+    }
+}
+
+fn derive_symbolic_nonce(aad_bytes: &[u8], public_value: &[u8]) -> [u8; 12] {
+    let mut nonce = [0u8; 12];
+    fill_symbolic_bytes(
+        &mut nonce,
+        b"plaintext-materialization/nonce",
+        aad_bytes,
+        public_value,
+    );
+    nonce
+}
+
+fn derive_symbolic_bytes(
+    label: &[u8],
+    aad_bytes: &[u8],
+    public_value: &[u8],
+    len: usize,
+) -> Vec<u8> {
+    let mut out = vec![0u8; len];
+    fill_symbolic_bytes(&mut out, label, aad_bytes, public_value);
+    out
+}
+
+fn mask_public_plaintext(aad_bytes: &[u8], public_value: &[u8]) -> Vec<u8> {
+    let mut keystream = vec![0u8; public_value.len()];
+    fill_symbolic_bytes(
+        &mut keystream,
+        b"plaintext-materialization/ciphertext",
+        aad_bytes,
+        public_value,
+    );
+    public_value
+        .iter()
+        .zip(keystream)
+        .map(|(plaintext, mask)| plaintext ^ mask)
+        .collect()
+}
+
+fn fill_symbolic_bytes(out: &mut [u8], label: &[u8], aad_bytes: &[u8], public_value: &[u8]) {
+    let mut state = 0xcbf2_9ce4_8422_2325u64;
+    for &byte in label
+        .iter()
+        .chain(aad_bytes.iter())
+        .chain(public_value.iter())
+    {
+        state ^= u64::from(byte);
+        state = state.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    for slot in out {
+        state ^= state >> 30;
+        state = state.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        state ^= state >> 27;
+        state = state.wrapping_mul(0x94D0_49BB_1331_11EB);
+        state ^= state >> 31;
+        *slot = state as u8;
     }
 }

@@ -9,7 +9,7 @@ use crate::ResolutionTask;
 
 use super::local::{LocalEnclaveConfig, AAD_VERSION, ENVELOPE_VERSION};
 use super::operation::type_tag_for_handle_type;
-use super::sealing::{seal_payload, unseal_payload};
+use super::sealing::{seal_payload, seal_system_payload, unseal_system_payload};
 
 pub(super) fn seal_input(
     config: &LocalEnclaveConfig,
@@ -43,9 +43,10 @@ pub(super) fn unseal_output(
     {
         return None;
     }
-    unseal_payload(
+    unseal_system_payload(
         &config.sealing_secret,
         &ciphertext.aad,
+        &ciphertext.nonce,
         &ciphertext.ciphertext,
     )
 }
@@ -65,12 +66,14 @@ pub(super) fn seal_output(
         key_id: config.system_key_id,
     };
     let aad_bytes = aad.encode();
-    let sealed = seal_payload(&config.sealing_secret, &aad_bytes, plaintext);
+    let sealed = seal_system_payload(&config.sealing_secret, &aad_bytes, plaintext);
     SystemCiphertextV1 {
-        version: ENVELOPE_VERSION,
-        aad: aad_bytes,
+        key_id: config.system_key_id,
+        enc: sealed.enc,
         wrapped_key: sealed.wrapped_key,
+        nonce: sealed.nonce,
         ciphertext: sealed.ciphertext,
+        aad: aad_bytes,
     }
 }
 

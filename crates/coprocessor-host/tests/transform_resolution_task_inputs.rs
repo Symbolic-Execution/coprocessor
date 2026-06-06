@@ -391,10 +391,12 @@ fn system_ciphertext_for(handle_key: HandleKey, type_tag: &str) -> SystemCiphert
     }
     .encode();
     let envelope = EnvelopeSystemCiphertextV1 {
-        version: 1,
-        aad,
+        key_id: cbinding::KeyId([DEFAULT_KEY_SEED; 32]),
+        enc: vec![0x99; 32],
         wrapped_key: vec![0xAA; 32],
+        nonce: [0x55; 12],
         ciphertext: vec![0xBB; 64],
+        aad,
     };
     SystemCiphertextV1(envelope.encode())
 }

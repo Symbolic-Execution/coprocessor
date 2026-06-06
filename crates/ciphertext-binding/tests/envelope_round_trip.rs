@@ -14,10 +14,12 @@ use common::{
 #[test]
 fn system_ciphertext_round_trip_with_system_input_aad_preserves_every_field() {
     let envelope = SystemCiphertextV1 {
-        version: 1,
-        aad: sample_system_input_aad().encode(),
+        key_id: common::sample_system_input_aad().key_id,
+        enc: vec![0x91; 32],
         wrapped_key: vec![0x01, 0x02, 0x03, 0x04, 0x05],
+        nonce: [0x31; 12],
         ciphertext: vec![0xAA, 0xBB, 0xCC, 0xDD],
+        aad: sample_system_input_aad().encode(),
     };
     let bytes = envelope.encode();
     let decoded = SystemCiphertextV1::decode(&bytes).expect("decode");
@@ -27,10 +29,12 @@ fn system_ciphertext_round_trip_with_system_input_aad_preserves_every_field() {
 #[test]
 fn system_ciphertext_round_trip_with_system_handle_aad_preserves_every_field() {
     let envelope = SystemCiphertextV1 {
-        version: 1,
-        aad: sample_system_handle_aad().encode(),
+        key_id: common::sample_system_handle_aad().key_id,
+        enc: vec![0x44; 32],
         wrapped_key: vec![0x10; 64],
+        nonce: [0x22; 12],
         ciphertext: vec![0x20; 128],
+        aad: sample_system_handle_aad().encode(),
     };
     let bytes = envelope.encode();
     let decoded = SystemCiphertextV1::decode(&bytes).expect("decode");
@@ -66,10 +70,12 @@ fn reader_ciphertext_round_trip_preserves_every_field() {
 #[test]
 fn each_envelope_encodes_as_a_definite_length_cbor_array() {
     let system = SystemCiphertextV1 {
-        version: 1,
-        aad: sample_system_input_aad().encode(),
+        key_id: common::sample_system_input_aad().key_id,
+        enc: vec![0x11; 32],
         wrapped_key: vec![0; 8],
+        nonce: [0x55; 12],
         ciphertext: vec![0; 16],
+        aad: sample_system_input_aad().encode(),
     }
     .encode();
     let enclave = EnclaveCiphertextV1 {
@@ -86,7 +92,12 @@ fn each_envelope_encodes_as_a_definite_length_cbor_array() {
         ciphertext: vec![0; 16],
     }
     .encode();
-    for bytes in [system, enclave, reader] {
+    assert_eq!(
+        system[0] & 0x1f,
+        6,
+        "system envelope must be a 6-element definite-length array"
+    );
+    for bytes in [enclave, reader] {
         let initial = bytes[0];
         let major = initial >> 5;
         assert_eq!(
@@ -104,10 +115,12 @@ fn each_envelope_encodes_as_a_definite_length_cbor_array() {
 #[test]
 fn empty_wrapped_key_and_ciphertext_round_trip() {
     let envelope = SystemCiphertextV1 {
-        version: 1,
-        aad: sample_system_input_aad().encode(),
+        key_id: common::sample_system_input_aad().key_id,
+        enc: Vec::new(),
         wrapped_key: Vec::new(),
+        nonce: [0u8; 12],
         ciphertext: Vec::new(),
+        aad: sample_system_input_aad().encode(),
     };
     let bytes = envelope.encode();
     let decoded = SystemCiphertextV1::decode(&bytes).expect("decode");

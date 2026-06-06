@@ -76,10 +76,12 @@ pub fn sample_reader_aad() -> ReaderAadV1 {
 
 pub fn sample_system_envelope() -> SystemCiphertextV1 {
     SystemCiphertextV1 {
-        version: 1,
-        aad: sample_system_input_aad().encode(),
+        key_id: KeyId(fill_32(0x11)),
+        enc: vec![0x66; 32],
         wrapped_key: vec![0x01, 0x02, 0x03, 0x04, 0x05],
+        nonce: [0x77; 12],
         ciphertext: vec![0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x10, 0x20, 0x30],
+        aad: sample_system_input_aad().encode(),
     }
 }
 

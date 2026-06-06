@@ -62,7 +62,7 @@ fn wrong_array_length_surfaces_wrong_length_error_for_each_envelope() {
         err,
         EnvelopeDecodeError::WrongLength {
             envelope: EnvelopeKind::System,
-            expected: 4,
+            expected: 6,
             actual: 3,
         }
     );
@@ -95,43 +95,55 @@ fn wrong_array_length_surfaces_wrong_length_error_for_each_envelope() {
 }
 
 #[test]
-fn version_field_must_be_unsigned_integer() {
+fn key_id_field_must_be_byte_string() {
     let mut bytes = sample_system_envelope().encode();
-    // Position 1 is the version uint; replace 0x01 with 0x60 (empty text string).
-    assert_eq!(bytes[1], 0x01);
-    bytes[1] = 0x60;
+    bytes[1] = 0x00;
     let err = SystemCiphertextV1::decode(&bytes).unwrap_err();
     assert_eq!(
         err,
         EnvelopeDecodeError::WrongFieldType {
             envelope: EnvelopeKind::System,
-            field: "version",
-            expected: "unsigned integer",
+            field: "key_id",
+            expected: "byte string",
         }
     );
 }
 
 #[test]
-fn version_overflow_when_value_exceeds_u8_is_rejected() {
-    // Hand-build a System envelope with version = 256 (overflows u8).
-    // [arr(4), uint(256), bstr(empty), bstr(empty), bstr(empty)]
-    let bytes = vec![DIRECT_ARRAY_HEADER | 4, 0x19, 0x01, 0x00, 0x40, 0x40, 0x40];
+fn key_id_wrong_length_is_rejected() {
+    let mut bytes = sample_system_envelope().encode();
+    bytes[1] = 0x41;
+    bytes[2] = 0x99;
     let err = SystemCiphertextV1::decode(&bytes).unwrap_err();
     assert_eq!(
         err,
-        EnvelopeDecodeError::VersionOverflow {
+        EnvelopeDecodeError::Malformed {
             envelope: EnvelopeKind::System,
-            value: 256,
         }
     );
 }
 
 #[test]
 fn aad_field_must_be_byte_string() {
-    let mut bytes = sample_system_envelope().encode();
-    // Position 2 is the AAD header; rewrite to a uint header to break the type.
-    assert_eq!(bytes[2] >> 5, 2, "AAD field should start as a byte string");
-    bytes[2] = 0x00;
+    let envelope = sample_system_envelope();
+    let mut bytes = envelope.encode();
+    let aad_offset = 1
+        + cbor_bstr_header_len(32)
+        + 32
+        + cbor_bstr_header_len(envelope.enc.len())
+        + envelope.enc.len()
+        + cbor_bstr_header_len(envelope.wrapped_key.len())
+        + envelope.wrapped_key.len()
+        + cbor_bstr_header_len(envelope.nonce.len())
+        + envelope.nonce.len()
+        + cbor_bstr_header_len(envelope.ciphertext.len())
+        + envelope.ciphertext.len();
+    assert_eq!(
+        bytes[aad_offset] >> 5,
+        2,
+        "AAD field should start as a byte string"
+    );
+    bytes[aad_offset] = 0x00;
     let err = SystemCiphertextV1::decode(&bytes).unwrap_err();
     assert_eq!(
         err,
@@ -141,6 +153,20 @@ fn aad_field_must_be_byte_string() {
             expected: "byte string",
         }
     );
+}
+
+fn cbor_bstr_header_len(len: usize) -> usize {
+    if len <= 23 {
+        1
+    } else if u8::try_from(len).is_ok() {
+        2
+    } else if u16::try_from(len).is_ok() {
+        3
+    } else if u32::try_from(len).is_ok() {
+        5
+    } else {
+        9
+    }
 }
 
 #[test]
@@ -171,12 +197,12 @@ fn trailing_bytes_after_envelope_array_are_rejected() {
 
 #[test]
 fn non_canonical_array_length_is_rejected() {
-    // 4-element array encoded with the 1-byte-extended form (0x98 0x04 ...) is
-    // non-canonical since the shortest form is 0x84.
+    // 6-element array encoded with the 1-byte-extended form (0x98 0x06 ...) is
+    // non-canonical since the shortest form is 0x86.
     let canonical = sample_system_envelope().encode();
     let mut bytes = Vec::with_capacity(canonical.len() + 1);
     bytes.push(0x98);
-    bytes.push(0x04);
+    bytes.push(0x06);
     bytes.extend_from_slice(&canonical[1..]);
     let err = SystemCiphertextV1::decode(&bytes).unwrap_err();
     assert_eq!(
@@ -190,10 +216,12 @@ fn non_canonical_array_length_is_rejected() {
 #[test]
 fn system_envelope_rejects_enclave_aad() {
     let envelope = SystemCiphertextV1 {
-        version: 1,
-        aad: sample_enclave_aad().encode(),
+        key_id: common::sample_system_input_aad().key_id,
+        enc: vec![0xAA; 32],
         wrapped_key: vec![0x00],
+        nonce: [0x11; 12],
         ciphertext: vec![0x00],
+        aad: sample_enclave_aad().encode(),
     };
     let bytes = envelope.encode();
     let err = SystemCiphertextV1::decode(&bytes).unwrap_err();
@@ -209,10 +237,12 @@ fn system_envelope_rejects_enclave_aad() {
 #[test]
 fn system_envelope_rejects_reader_aad() {
     let envelope = SystemCiphertextV1 {
-        version: 1,
-        aad: sample_reader_aad().encode(),
+        key_id: common::sample_system_input_aad().key_id,
+        enc: vec![0xBB; 32],
         wrapped_key: vec![0x00],
+        nonce: [0x22; 12],
         ciphertext: vec![0x00],
+        aad: sample_reader_aad().encode(),
     };
     let bytes = envelope.encode();
     let err = SystemCiphertextV1::decode(&bytes).unwrap_err();
@@ -267,10 +297,12 @@ fn reader_envelope_rejects_enclave_aad() {
 fn malformed_aad_bytes_surface_aad_decode_error() {
     // AAD bytes that don't parse as any AAD kind: a non-array CBOR value.
     let envelope = SystemCiphertextV1 {
-        version: 1,
-        aad: vec![0x01],
+        key_id: common::sample_system_input_aad().key_id,
+        enc: vec![0xCC; 32],
         wrapped_key: vec![0x00],
+        nonce: [0x33; 12],
         ciphertext: vec![0x00],
+        aad: vec![0x01],
     };
     let bytes = envelope.encode();
     let err = SystemCiphertextV1::decode(&bytes).unwrap_err();
@@ -291,10 +323,12 @@ fn envelope_error_strings_do_not_contain_payload_bytes() {
     // surface the opaque payload bytes the envelope was trying to carry.
     let secret = b"PLAINTEXT_LOOKING_PAYLOAD_DO_NOT_LEAK".to_vec();
     let envelope = SystemCiphertextV1 {
-        version: 1,
-        aad: sample_enclave_aad().encode(),
+        key_id: common::sample_system_input_aad().key_id,
+        enc: vec![0xDD; 32],
         wrapped_key: secret.clone(),
+        nonce: [0x44; 12],
         ciphertext: secret.clone(),
+        aad: sample_enclave_aad().encode(),
     };
     let bytes = envelope.encode();
     let err = SystemCiphertextV1::decode(&bytes).unwrap_err();

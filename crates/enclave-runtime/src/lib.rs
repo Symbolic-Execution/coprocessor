@@ -20,7 +20,8 @@
 //! ciphertext envelopes and receipt metadata only.
 
 pub use coprocessor_ciphertext_binding::{
-    AttestationDigest, DomainId, EnclaveCiphertextV1, KeyId, RequestId, SystemCiphertextV1,
+    AttestationDigest, DomainId, EnclaveAadV1, EnclaveCiphertextV1, KeyId, RequestId,
+    SystemCiphertextV1, SystemHandleAadV1,
 };
 pub use coprocessor_handle_graph_core::{HandleKey, HandleType, OperationCode};
 
@@ -219,11 +220,6 @@ impl FakeEnclaveRuntime {
     }
 }
 
-const FAKE_SYSTEM_CIPHERTEXT_VERSION: u8 = 1;
-const FAKE_AAD_PREFIX: &[u8] = b"fake-enclave-runtime/aad:";
-const FAKE_WRAPPED_KEY_PREFIX: &[u8] = b"fake-enclave-runtime/wrapped:";
-const FAKE_CIPHERTEXT_PREFIX: &[u8] = b"fake-enclave-runtime/result:";
-
 /// Build a fingerprint [`SystemCiphertextV1`] from a task. The bytes are
 /// deterministic and depend on the request id, output Handle Key,
 /// OperationCode, and the AAD and ciphertext bytes of each input, so different
@@ -231,26 +227,88 @@ const FAKE_CIPHERTEXT_PREFIX: &[u8] = b"fake-enclave-runtime/result:";
 /// they only let tests assert the boundary plumbing wires inputs through to
 /// the host-visible result without ever holding plaintext.
 fn synth_system_ciphertext(task: &ResolutionTask) -> SystemCiphertextV1 {
-    let mut aad = FAKE_AAD_PREFIX.to_vec();
-    aad.extend_from_slice(&task.request_id.0);
-    aad.extend_from_slice(&task.output_handle_key.handle_id.0);
-
-    let mut wrapped_key = FAKE_WRAPPED_KEY_PREFIX.to_vec();
-    wrapped_key.extend_from_slice(&task.attestation_digest.0);
-
-    let mut ciphertext = FAKE_CIPHERTEXT_PREFIX.to_vec();
-    ciphertext.push(op_code_byte(task.operation_code));
+    let system_aad = synth_system_handle_aad(task);
+    let aad = system_aad.encode();
+    let mut fingerprint_input = Vec::new();
+    fingerprint_input.extend_from_slice(&task.request_id.0);
+    fingerprint_input.push(op_code_byte(task.operation_code));
+    fingerprint_input.extend_from_slice(&task.output_handle_key.handle_id.0);
     for input in &task.input_ciphertexts {
-        ciphertext.extend_from_slice(&input.aad);
-        ciphertext.extend_from_slice(&input.ciphertext);
+        fingerprint_input.extend_from_slice(&input.aad);
+        fingerprint_input.extend_from_slice(&input.ciphertext);
     }
-    ciphertext.extend_from_slice(&task.output_handle_key.handle_id.0);
 
     SystemCiphertextV1 {
-        version: FAKE_SYSTEM_CIPHERTEXT_VERSION,
+        key_id: system_aad.key_id,
+        enc: derive_fake_bytes(b"fake-enclave-runtime/enc", &aad, &fingerprint_input, 32),
+        wrapped_key: derive_fake_bytes(
+            b"fake-enclave-runtime/wrapped-key",
+            &aad,
+            &fingerprint_input,
+            16,
+        ),
+        nonce: derive_fake_nonce(&aad, &fingerprint_input),
+        ciphertext: derive_fake_bytes(
+            b"fake-enclave-runtime/ciphertext",
+            &aad,
+            &fingerprint_input,
+            32,
+        ),
         aad,
-        wrapped_key,
-        ciphertext,
+    }
+}
+
+fn synth_system_handle_aad(task: &ResolutionTask) -> SystemHandleAadV1 {
+    let first_input_aad = task
+        .input_ciphertexts
+        .first()
+        .and_then(|ciphertext| EnclaveAadV1::decode(&ciphertext.aad).ok());
+    let type_tag = match task.output_handle_type {
+        HandleType::Suint256 => "suint256",
+        HandleType::Sbool => "sbool",
+    };
+
+    SystemHandleAadV1 {
+        version: 1,
+        chain_id: task.output_handle_key.chain_id.0,
+        domain_id: first_input_aad
+            .as_ref()
+            .map(|aad| aad.domain_id)
+            .unwrap_or(DomainId([0u8; 32])),
+        handle_id: coprocessor_ciphertext_binding::HandleId(task.output_handle_key.handle_id.0),
+        type_tag: type_tag.to_string(),
+        key_id: first_input_aad
+            .as_ref()
+            .map(|aad| aad.key_id)
+            .unwrap_or(KeyId([0u8; 32])),
+    }
+}
+
+fn derive_fake_nonce(aad: &[u8], payload: &[u8]) -> [u8; 12] {
+    let mut nonce = [0u8; 12];
+    fill_fake_bytes(&mut nonce, b"fake-enclave-runtime/nonce", aad, payload);
+    nonce
+}
+
+fn derive_fake_bytes(label: &[u8], aad: &[u8], payload: &[u8], len: usize) -> Vec<u8> {
+    let mut out = vec![0u8; len];
+    fill_fake_bytes(&mut out, label, aad, payload);
+    out
+}
+
+fn fill_fake_bytes(out: &mut [u8], label: &[u8], aad: &[u8], payload: &[u8]) {
+    let mut state = 0xcbf2_9ce4_8422_2325u64;
+    for &byte in label.iter().chain(aad.iter()).chain(payload.iter()) {
+        state ^= u64::from(byte);
+        state = state.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    for slot in out {
+        state ^= state >> 30;
+        state = state.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        state ^= state >> 27;
+        state = state.wrapping_mul(0x94D0_49BB_1331_11EB);
+        state ^= state >> 31;
+        *slot = state as u8;
     }
 }
 

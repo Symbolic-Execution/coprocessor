@@ -8,7 +8,7 @@ use super::cbor::{CborReadError, Reader, MAJOR_ARRAY, MAJOR_BYTE_STRING, MAJOR_U
 use super::identifiers::{AadKind, EnvelopeKind, KeyId};
 
 const ENVELOPE_ARRAY_LENGTH: usize = 4;
-const CANONICAL_SYSTEM_CIPHERTEXT_ARRAY_LENGTH: usize = 6;
+const SYSTEM_CIPHERTEXT_ARRAY_LENGTH: usize = 6;
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum EnvelopeDecodeError {
@@ -62,17 +62,6 @@ impl EnvelopeDecodeError {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SystemCiphertextV1 {
-    pub version: u8,
-    pub aad: Vec<u8>,
-    pub wrapped_key: Vec<u8>,
-    pub ciphertext: Vec<u8>,
-}
-
-/// Canonical-CBOR `SystemCiphertextV1` matching the public spec shape used by
-/// `sym-client`, `mpc`, `coordinator`, and the on-chain `HandleImportedV1`
-/// event surface.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CanonicalSystemCiphertextV1 {
     pub key_id: KeyId,
     pub enc: Vec<u8>,
     pub wrapped_key: Vec<u8>,
@@ -80,6 +69,8 @@ pub struct CanonicalSystemCiphertextV1 {
     pub ciphertext: Vec<u8>,
     pub aad: Vec<u8>,
 }
+
+pub type CanonicalSystemCiphertextV1 = SystemCiphertextV1;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EnclaveCiphertextV1 {
@@ -99,29 +90,8 @@ pub struct ReaderCiphertextV1 {
 
 impl SystemCiphertextV1 {
     pub fn encode(&self) -> Vec<u8> {
-        encode_envelope(self.version, &self.aad, &self.wrapped_key, &self.ciphertext)
-    }
-
-    pub fn decode(bytes: &[u8]) -> Result<Self, EnvelopeDecodeError> {
-        let DecodedEnvelope {
-            version,
-            aad,
-            wrapped_key,
-            ciphertext,
-        } = decode_envelope(bytes, EnvelopeKind::System)?;
-        Ok(Self {
-            version,
-            aad,
-            wrapped_key,
-            ciphertext,
-        })
-    }
-}
-
-impl CanonicalSystemCiphertextV1 {
-    pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        write_array_header(&mut out, CANONICAL_SYSTEM_CIPHERTEXT_ARRAY_LENGTH);
+        write_array_header(&mut out, SYSTEM_CIPHERTEXT_ARRAY_LENGTH);
         write_byte_string(&mut out, &self.key_id.0);
         write_byte_string(&mut out, &self.enc);
         write_byte_string(&mut out, &self.wrapped_key);
@@ -135,14 +105,18 @@ impl CanonicalSystemCiphertextV1 {
         let envelope = EnvelopeKind::System;
         let mut reader = Reader::new(bytes);
         let array_len = read_array_header(&mut reader, envelope)?;
-        if array_len != CANONICAL_SYSTEM_CIPHERTEXT_ARRAY_LENGTH {
+        if array_len != SYSTEM_CIPHERTEXT_ARRAY_LENGTH {
             return Err(EnvelopeDecodeError::WrongLength {
                 envelope,
-                expected: CANONICAL_SYSTEM_CIPHERTEXT_ARRAY_LENGTH,
+                expected: SYSTEM_CIPHERTEXT_ARRAY_LENGTH,
                 actual: array_len,
             });
         }
-        let key_id = KeyId(read_fixed_byte_string::<32>(&mut reader, envelope, "key_id")?);
+        let key_id = KeyId(read_fixed_byte_string::<32>(
+            &mut reader,
+            envelope,
+            "key_id",
+        )?);
         let enc = read_envelope_byte_string(&mut reader, envelope, "enc")?;
         let wrapped_key = read_envelope_byte_string(&mut reader, envelope, "wrapped_key")?;
         let nonce = read_fixed_byte_string::<12>(&mut reader, envelope, "nonce")?;

@@ -55,11 +55,14 @@ fn encoded_envelope_is_a_quoted_base64_string() {
 #[test]
 fn empty_payload_envelope_round_trips() {
     // Wrap an empty wrapped_key + empty ciphertext to cover the zero-byte case.
+    let sample = sample_system_envelope();
     let envelope = SystemCiphertextV1 {
-        version: 1,
-        aad: sample_system_envelope().aad,
+        key_id: sample.key_id,
+        enc: Vec::new(),
         wrapped_key: Vec::new(),
+        nonce: [0u8; 12],
         ciphertext: Vec::new(),
+        aad: sample.aad,
     };
     let json = encode_system_ciphertext(&envelope);
     let decoded = decode_system_ciphertext(&json).expect("decode");

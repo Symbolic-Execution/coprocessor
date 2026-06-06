@@ -13,7 +13,6 @@ use coprocessor_handle_graph_core::{
 
 const ACTIVE_KEY_ID: [u8; 32] = [0xAB; 32];
 const AAD_VERSION: u8 = 1;
-const ENVELOPE_VERSION: u8 = 1;
 const DOMAIN_SEED: u8 = 9;
 const CONTRACT_SEED: u8 = 7;
 
@@ -32,7 +31,7 @@ fn materialized_suint256_plaintext_binds_system_handle_aad_v1() {
 
     let (envelope, aad) = decode_ready_envelope(&core, &handle_key);
 
-    assert_eq!(envelope.version, ENVELOPE_VERSION);
+    assert_eq!(envelope.key_id.0, ACTIVE_KEY_ID);
     assert_eq!(aad.version, AAD_VERSION);
     assert_eq!(aad.chain_id, 1);
     assert_eq!(aad.domain_id.0, bytes32(DOMAIN_SEED));
@@ -56,7 +55,7 @@ fn materialized_sbool_plaintext_binds_system_handle_aad_v1() {
 
     let (envelope, aad) = decode_ready_envelope(&core, &handle_key);
 
-    assert_eq!(envelope.version, ENVELOPE_VERSION);
+    assert_eq!(envelope.key_id.0, ACTIVE_KEY_ID);
     assert_eq!(aad.type_tag, "sbool");
     assert_eq!(aad.chain_id, 1);
     assert_eq!(aad.domain_id.0, bytes32(DOMAIN_SEED));
@@ -164,10 +163,12 @@ fn system_ciphertext_decode_rejects_non_system_handle_aad_kind() {
         key_id: aad.key_id,
     };
     let wrong_envelope = EnvelopeSystemCiphertextV1 {
-        version: ENVELOPE_VERSION,
-        aad: wrong_aad.encode(),
+        key_id: cbinding::KeyId(ACTIVE_KEY_ID),
+        enc: vec![0x01; 32],
         wrapped_key: Vec::new(),
+        nonce: [0u8; 12],
         ciphertext: Vec::new(),
+        aad: wrong_aad.encode(),
     };
     let bytes = wrong_envelope.encode();
     let err = EnvelopeSystemCiphertextV1::decode(&bytes)

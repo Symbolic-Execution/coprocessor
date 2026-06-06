@@ -41,10 +41,12 @@ pub fn system_ciphertext_for_test_request() -> SystemCiphertextV1 {
     }
     .encode();
     SystemCiphertextV1 {
-        version: 1,
-        aad,
+        key_id: TEST_KEY_ID,
+        enc: vec![0x99; 32],
         wrapped_key: vec![0xAA; 32],
+        nonce: [0x77; 12],
         ciphertext: vec![0xBB; 64],
+        aad,
     }
 }
 
