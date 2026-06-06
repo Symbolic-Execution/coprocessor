@@ -13,7 +13,11 @@ use coprocessor_handle_graph_core::{
 };
 use coprocessor_host::{
     CoprocessorHost, DependencyName, HostConfig, HostConfigError, HostStartError, LifecycleState,
-    Readiness, RetryPolicy,
+    HostMpcConfigReloadError, Readiness, RetryPolicy,
+};
+use coprocessor_mpc::{
+    MpcConfigIncompatibility, MpcConfigLoadError, MpcConfigSource, MpcConfigSourceError,
+    ReaderKeyAlgorithm,
 };
 
 #[test]
@@ -226,10 +230,117 @@ fn validate_config_rejects_mpc_and_enclave_measurement_mismatch() {
     ));
 }
 
+#[test]
+fn reload_mpc_public_config_replaces_host_owned_control_plane_view() {
+    let mut config = HostConfig::for_local_development();
+    let source = StubSource::new(valid_config_json(
+        config.mpc.expectations.chain_id.0,
+        config.mpc.expectations.domain_id.0,
+        [0xA5; 32],
+        config.mpc.public_config.approved_enclave_measurement.0,
+    ));
+
+    config.reload_mpc_public_config(&source).unwrap();
+
+    assert_eq!(config.mpc.public_config.key_id.0, [0xA5; 32]);
+    assert_eq!(
+        config.mpc.public_config.reader_key_algorithm,
+        ReaderKeyAlgorithm::X25519
+    );
+}
+
+#[test]
+fn reload_mpc_public_config_surfaces_compatibility_failures() {
+    let mut config = HostConfig::for_local_development();
+    let source = StubSource::new(valid_config_json(
+        999,
+        config.mpc.expectations.domain_id.0,
+        [0x22; 32],
+        config.mpc.public_config.approved_enclave_measurement.0,
+    ));
+
+    let err = config.reload_mpc_public_config(&source).unwrap_err();
+
+    assert!(matches!(
+        err,
+        HostMpcConfigReloadError::Load(MpcConfigLoadError::Incompatible(
+            MpcConfigIncompatibility::ChainIdMismatch { .. }
+        ))
+    ));
+}
+
+#[test]
+fn reload_mpc_public_config_rejects_enclave_measurement_mismatch() {
+    let mut config = HostConfig::for_local_development();
+    let source = StubSource::new(valid_config_json(
+        config.mpc.expectations.chain_id.0,
+        config.mpc.expectations.domain_id.0,
+        [0x22; 32],
+        [0x99; 32],
+    ));
+
+    let err = config.reload_mpc_public_config(&source).unwrap_err();
+
+    assert!(matches!(
+        err,
+        HostMpcConfigReloadError::MpcEnclaveMeasurementMismatch { .. }
+    ));
+}
+
 fn sample_handle_key() -> HandleKey {
     HandleKey {
         chain_id: ChainId(1),
         contract_address: ContractAddress([0xC0u8; 20]),
         handle_id: HandleId([0x42u8; 32]),
     }
+}
+
+struct StubSource {
+    body: String,
+}
+
+impl StubSource {
+    fn new(body: impl Into<String>) -> Self {
+        Self { body: body.into() }
+    }
+}
+
+impl MpcConfigSource for StubSource {
+    fn fetch(&self) -> Result<String, MpcConfigSourceError> {
+        Ok(self.body.clone())
+    }
+}
+
+fn valid_config_json(
+    chain_id: u64,
+    domain_id: [u8; 32],
+    key_id: [u8; 32],
+    approved_enclave_measurement: [u8; 32],
+) -> String {
+    format!(
+        concat!(
+            "{{",
+            "\"chain_id\":{chain_id},",
+            "\"domain_id\":\"{domain_id}\",",
+            "\"key_id\":\"{key_id}\",",
+            "\"hpke_public_key\":\"{hpke_public_key}\",",
+            "\"reader_key_algorithm\":\"X25519\",",
+            "\"ciphertext_suite\":\"HpkeX25519HkdfSha256Aes256Gcm\",",
+            "\"approved_enclave_measurement\":\"{approved_enclave_measurement}\"",
+            "}}"
+        ),
+        chain_id = chain_id,
+        domain_id = hex32(domain_id),
+        key_id = hex32(key_id),
+        hpke_public_key = hex32([0x44; 32]),
+        approved_enclave_measurement = hex32(approved_enclave_measurement),
+    )
+}
+
+fn hex32(bytes: [u8; 32]) -> String {
+    let mut out = String::from("0x");
+    for byte in bytes {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
 }

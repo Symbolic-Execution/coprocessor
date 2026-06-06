@@ -48,7 +48,8 @@ pub use dependency::DependencyName;
 
 mod config;
 pub use config::{
-    EnclaveAttestationConfig, HostConfig, HostConfigError, HostMpcConfig, RetryPolicy,
+    EnclaveAttestationConfig, HostConfig, HostConfigError, HostMpcConfig,
+    HostMpcConfigReloadError, RetryPolicy,
 };
 
 mod lifecycle;

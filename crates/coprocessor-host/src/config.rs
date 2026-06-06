@@ -4,8 +4,8 @@ use coprocessor_handle_graph_core::PlaintextMaterializer;
 use coprocessor_mpc::{
     AttestationDigest as MpcAttestationDigest, ChainId as MpcChainId,
     CiphertextSuite as MpcCiphertextSuite, DomainId as MpcDomainId, KeyId as MpcKeyId,
-    MpcConfigExpectations, MpcPublicConfig, ReaderKeyAlgorithm as MpcReaderKeyAlgorithm,
-    X25519PublicKey,
+    MpcConfigExpectations, MpcConfigLoadError, MpcConfigSource, MpcPublicConfig,
+    ReaderKeyAlgorithm as MpcReaderKeyAlgorithm, X25519PublicKey, load_mpc_public_config,
 };
 use coprocessor_nitro_enclave::{
     EnclaveAttestationSource, LocalEnclaveAttestationConfig, LocalEnclaveAttestationSource,
@@ -177,6 +177,28 @@ impl HostConfig {
         }
     }
 
+    /// Reload the trusted MPC public configuration from `source` using the
+    /// host's persisted compatibility expectations.
+    ///
+    /// The freshly loaded config must still agree with the currently selected
+    /// Enclave attestation measurement before it replaces the host-owned MPC
+    /// control-plane view.
+    pub fn reload_mpc_public_config(
+        &mut self,
+        source: &dyn MpcConfigSource,
+    ) -> Result<(), HostMpcConfigReloadError> {
+        let public_config = load_mpc_public_config(source, &self.mpc.expectations)?;
+        let attestation_measurement = self.attestation_measurement();
+        if public_config.approved_enclave_measurement != attestation_measurement {
+            return Err(HostMpcConfigReloadError::MpcEnclaveMeasurementMismatch {
+                mpc_measurement: public_config.approved_enclave_measurement,
+                enclave_measurement: attestation_measurement,
+            });
+        }
+        self.mpc.public_config = public_config;
+        Ok(())
+    }
+
     /// Build a [`LocalEnclaveAttestationSource`] from the config's local
     /// attestation material. Returns
     /// [`HostStartError::EnclaveAttestationModeMismatch`] if the config uses
@@ -242,12 +264,7 @@ impl HostConfig {
             })?;
         }
         let configured_measurement = self.mpc.public_config.approved_enclave_measurement;
-        let attestation_measurement = match &self.enclave_attestation {
-            EnclaveAttestationConfig::Local(cfg) => MpcAttestationDigest(cfg.enclave_measurement.0),
-            EnclaveAttestationConfig::Nitro(cfg) => {
-                MpcAttestationDigest(cfg.approved_enclave_measurement.0)
-            }
-        };
+        let attestation_measurement = self.attestation_measurement();
         if configured_measurement != attestation_measurement {
             return Err(HostConfigError::MpcEnclaveMeasurementMismatch {
                 mpc_measurement: configured_measurement,
@@ -255,6 +272,15 @@ impl HostConfig {
             });
         }
         Ok(())
+    }
+
+    fn attestation_measurement(&self) -> MpcAttestationDigest {
+        match &self.enclave_attestation {
+            EnclaveAttestationConfig::Local(cfg) => MpcAttestationDigest(cfg.enclave_measurement.0),
+            EnclaveAttestationConfig::Nitro(cfg) => {
+                MpcAttestationDigest(cfg.approved_enclave_measurement.0)
+            }
+        }
     }
 }
 
@@ -278,6 +304,21 @@ pub enum HostConfigError {
     /// `detail` is the non-secret description of the failing rule.
     #[error("invalid Enclave attestation config: {detail}")]
     InvalidEnclaveAttestationConfig { detail: String },
+    #[error(
+        "MPC approved measurement {mpc_measurement:?} does not match Enclave measurement {enclave_measurement:?}"
+    )]
+    MpcEnclaveMeasurementMismatch {
+        mpc_measurement: MpcAttestationDigest,
+        enclave_measurement: MpcAttestationDigest,
+    },
+}
+
+/// Reasons reloading the MPC public configuration can fail after a host has
+/// already chosen its attestation mode and compatibility expectations.
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+pub enum HostMpcConfigReloadError {
+    #[error(transparent)]
+    Load(#[from] MpcConfigLoadError),
     #[error(
         "MPC approved measurement {mpc_measurement:?} does not match Enclave measurement {enclave_measurement:?}"
     )]
